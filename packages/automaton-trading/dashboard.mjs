@@ -196,6 +196,9 @@ function buildAgents(registry, ledger, marketMap = {}) {
       positionsValueUsd: equity.positionsValueUsd,
       unrealizedPlUsd: equity.unrealizedPlUsd,
       totalPlUsd: round2(led.realizedPlUsd + equity.unrealizedPlUsd),
+      // 当前总盈亏 = 目前总额(持仓+现金) − 起始资金。这是相对于你实际投入的真实盈亏，
+      // 与「帳面總盈虧」(已实现+未实现) 不同：它会反映 metabolism/LLM 等真实成本消耗。
+      currentPlUsd: round2(equity.equityUsd - num(agent.endowmentUsd ?? led.declaredEndowmentUsd ?? 0)),
       positions: Object.values(led.positions ?? {}).map((position) => ({
         symbol: position.symbol,
         assetClass: position.assetClass ?? 'us_equity',

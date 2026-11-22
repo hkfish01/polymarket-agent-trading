@@ -4,7 +4,7 @@
   "cycleIntervalSec": 300,
   "reaperIntervalSec": 30,
   "population": { "initial": 15, "cap": 30 },
-  "endowmentUsd": 5000,
+  "endowmentUsd": 500,
   "deathFloorUsd": 1,
   "deathFloorPct": 0.05,
   "maxDrawdownPct": 0.2,
@@ -16,9 +16,9 @@
   },
   "cycleBudget": { "STABLE": 4, "TIGHT": 1.5, "CRITICAL": 0.5 },
   "replication": {
-    "surplus7dUsd": 500,
+    "surplus7dUsd": 50,
     "minRunwayHours": 72,
-    "childEndowmentUsd": 2500
+    "childEndowmentUsd": 250
   },
   "account": {
     "allocationCapPct": 0.8,
@@ -31,7 +31,7 @@
     "maxDailyOrders": 40,
     "maxDailyLossPct": 0.2,
     "maxOrderPctOfEquity": 0.5,
-    "maxOrderNotionalUsd": 2000,
+    "maxOrderNotionalUsd": 200,
     "minOrderNotionalUsd": 1,
     "allowShort": false,
     "allowMargin": false,

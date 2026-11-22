@@ -288,12 +288,13 @@
           <tr>
             <th class="sortable" data-key="name">Agent<span class="sort-arrow"></span></th>
             <th class="sortable" data-key="status">狀態<span class="sort-arrow"></span></th>
-            <th class="sortable num" data-key="equityUsd">權益 (USD)<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="equityUsd">目前總額<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="cashUsd">現金<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="positionsValueUsd">持倉市值<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="currentPlUsd">當前總盈虧<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="realizedPlUsd">已實現盈虧<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="unrealizedPlUsd">未實現盈虧<span class="sort-arrow"></span></th>
-            <th class="sortable num" data-key="totalPlUsd">總盈虧<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="totalPlUsd">帳面總盈虧<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="trades">交易數<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="costsUsd">成本<span class="sort-arrow"></span></th>
             <th>持倉</th>
@@ -360,6 +361,7 @@ function sortValue(agent, key) {
     case 'realRmb': return agent.tokens?.realRmb ?? 0;
     case 'unrealizedPlUsd': return Number(agent.unrealizedPlUsd ?? 0);
     case 'totalPlUsd': return Number(agent.totalPlUsd ?? 0);
+    case 'currentPlUsd': return Number(agent.currentPlUsd ?? 0);
     default: return Number(agent[key] ?? 0);
   }
 }
@@ -462,6 +464,7 @@ function render(payload) {
       <td class="num">${usd(a.equityUsd)}</td>
       <td class="num">${usd(a.cashUsd)}</td>
       <td class="num">${usd(a.positionsValueUsd)}</td>
+      <td class="num ${cls(a.currentPlUsd)}">${usd(a.currentPlUsd)}</td>
       <td class="num ${cls(a.realizedPlUsd)}">${usd(a.realizedPlUsd)}</td>
       <td class="num ${cls(a.unrealizedPlUsd)}">${usd(a.unrealizedPlUsd)}</td>
       <td class="num ${cls(a.totalPlUsd)}">${usd(a.totalPlUsd)}</td>
