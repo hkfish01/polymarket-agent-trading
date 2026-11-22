@@ -136,7 +136,7 @@ services:
       - SEARXNG_URL=http://192.168.16.202:8080
       - SCAN_INTERVAL_MS=900000
     volumes:
-      - meat-state:/app/state:ro
+      - meat-state:/app/state
     env_file:
       - ./.env
     logging:

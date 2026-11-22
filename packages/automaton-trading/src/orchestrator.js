@@ -268,7 +268,7 @@ export async function createAutomaton(options = {}) {
   const llmGenerate = options.researchGenerate ?? options.generate ?? null;
   const probTrader = isPolysim && typeof llmGenerate === 'function'
     ? createProbTrader({
-        broker, ledger, config, generate: llmGenerate, clock,
+        broker, ledger, config, generate: llmGenerate, clock, paths,
         // Use the outcome-market brakes (no spread/quote dependency), not the stock brakes.
         brakes: createBrakesPolymarket({ config, paths, clock }),
       })

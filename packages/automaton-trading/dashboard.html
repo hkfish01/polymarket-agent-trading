@@ -115,7 +115,7 @@
   .sec-head { display: flex; align-items: center; cursor: pointer; user-select: none; }
   .sec-head h2 { margin: 0; }
   .sec-toggle {
-    margin-left: auto; border: 1px solid var(--border); background: var(--bg);
+    margin-left: 15px; border: 1px solid var(--border); background: var(--bg);
     color: var(--muted); border-radius: 5px; width: 26px; height: 26px;
     font-size: 15px; line-height: 1; cursor: pointer; display: grid; place-items: center;
   }
@@ -217,6 +217,23 @@
   .market-link:hover { text-decoration: underline; }
   .equity-mini { width: 100%; height: 160px; }
   .empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
+  /* --- scout sentiment signals --- */
+  .scout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 8px 16px 16px; }
+  .scout-card { border: 0.5px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--bg); }
+  .scout-card .s-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .scout-card .s-sym { font-family: var(--mono); font-weight: 600; font-size: 13px; }
+  .scout-card .s-cat { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-family: var(--mono); }
+  .scout-card .s-emo { margin-left: auto; font-size: 16px; }
+  .scout-card .s-q { font-size: 12px; line-height: 1.35; margin-bottom: 8px; color: var(--text, #1f2328); }
+  .scout-card .s-news { font-size: 12px; line-height: 1.4; padding: 8px; border-radius: 6px; }
+  .scout-card .s-news a { color: var(--accent); text-decoration: none; }
+  .scout-card .s-news a:hover { text-decoration: underline; }
+  .scout-card .s-meta { display: flex; gap: 10px; margin-top: 8px; font-size: 11px; font-family: var(--mono); color: var(--muted); }
+  .scout-card .s-meta strong { font-weight: 600; }
+  .sent-pos { background: rgba(46, 160, 67, 0.1); border-left: 3px solid var(--ok); }
+  .sent-neg { background: rgba(207, 34, 46, 0.08); border-left: 3px solid var(--dead); }
+  .sent-neu { background: var(--bg); border-left: 3px solid var(--border); }
+  .scout-empty { color: var(--muted); padding: 16px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -256,6 +273,14 @@
   </div>
 
   <div class="section">
+    <div class="sec-head" data-sec="scout"><h2>最新輿情信號（Scout Bot）</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
+    <div class="sec-body">
+      <div class="muted" style="font-size:12px;padding:8px 16px 0">Scout Bot 每 15 分鐘抓取各市場的最新新聞，用 LLM 打出情感分（-1 看空 / +1 看多）和概率修正建議（prob nudge）。prob-trader 下單時會把這些新聞注入 LLM prompt，提升概率判斷質量。點擊新聞標題可跳轉原文。</div>
+      <div class="scout-grid" id="scout-signals"></div>
+    </div>
+  </div>
+
+  <div class="section">
     <div class="sec-head" data-sec="overview"><h2>Agent 總覽</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
     <div class="sec-body" style="overflow-x:auto">
       <table>
@@ -267,6 +292,8 @@
             <th class="sortable num" data-key="cashUsd">現金<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="positionsValueUsd">持倉市值<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="realizedPlUsd">已實現盈虧<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="unrealizedPlUsd">未實現盈虧<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="totalPlUsd">總盈虧<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="trades">交易數<span class="sort-arrow"></span></th>
             <th class="sortable num" data-key="costsUsd">成本<span class="sort-arrow"></span></th>
             <th>持倉</th>
@@ -331,6 +358,8 @@ function sortValue(agent, key) {
     case 'msgCount': return (agent.researchMessageCount ?? 0) + (agent.brainMessageCount ?? 0);
     case 'tokens': return agent.tokens?.totalTokens ?? 0;
     case 'realRmb': return agent.tokens?.realRmb ?? 0;
+    case 'unrealizedPlUsd': return Number(agent.unrealizedPlUsd ?? 0);
+    case 'totalPlUsd': return Number(agent.totalPlUsd ?? 0);
     default: return Number(agent[key] ?? 0);
   }
 }
@@ -364,7 +393,7 @@ function pill(text, kind) {
 }
 
 function render(payload) {
-  const { summary, treasury, pricing, equityCurve, generationTree, deathStats } = payload;
+  const { summary, treasury, pricing, equityCurve, generationTree, deathStats, scoutSignals } = payload;
   const agents = sortedAgents(payload.agents ?? []);
   lastAgents = agents;
   window.__agents = agents; // cache for the click-to-detail modal
@@ -434,6 +463,8 @@ function render(payload) {
       <td class="num">${usd(a.cashUsd)}</td>
       <td class="num">${usd(a.positionsValueUsd)}</td>
       <td class="num ${cls(a.realizedPlUsd)}">${usd(a.realizedPlUsd)}</td>
+      <td class="num ${cls(a.unrealizedPlUsd)}">${usd(a.unrealizedPlUsd)}</td>
+      <td class="num ${cls(a.totalPlUsd)}">${usd(a.totalPlUsd)}</td>
       <td class="num">${a.trades}</td>
       <td class="num">${usd(a.costsUsd, 4)}</td>
       <td class="positions">${positions}</td>
@@ -476,6 +507,7 @@ function render(payload) {
   renderEquityCurve(equityCurve ?? []);
   renderGenerationTree(generationTree ?? { roots: [], nodes: [] });
   renderDeathStats(deathStats ?? { totalDeaths: 0, byCause: {}, deaths: [], aliveByGeneration: {} });
+  renderScoutSignals(scoutSignals ?? []);
 
   // Bind click-to-detail on agent rows.
   document.querySelectorAll('.agent-row').forEach((row) => {
@@ -678,6 +710,43 @@ function renderGenerationTree(tree) {
 }
 
 /** Death stats — cause bar chart + chronological death list. */
+function renderScoutSignals(signals) {
+  const el = document.getElementById('scout-signals');
+  if (!el) return;
+  if (signals.length === 0) {
+    el.innerHTML = '<div class="scout-empty">暫無輿情信號 — Scout Bot 尚未完成首次掃描，或所有市場都沒有相關新聞。</div>';
+    return;
+  }
+  const sentimentEmoji = (s) => (s > 0.3 ? '🐂' : s < -0.3 ? '🐻' : '😐');
+  const sentClass = (s) => (s > 0.15 ? 'sent-pos' : s < -0.15 ? 'sent-neg' : 'sent-neu');
+  const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString('zh-TW', { hour12: false }) : '—');
+  const sign = (v) => (v >= 0 ? '+' : '') + v.toFixed(2);
+
+  el.innerHTML = signals.map(s => {
+    const cls = sentClass(s.sentiment);
+    const emo = sentimentEmoji(s.sentiment);
+    const newsLink = s.headlineUrl
+      ? `<a href="${s.headlineUrl}" target="_blank" rel="noopener">${s.headline}</a>`
+      : (s.headline || '—');
+    return `<div class="scout-card">
+      <div class="s-head">
+        <span class="s-sym">${s.symbol}</span>
+        ${s.category ? `<span class="s-cat">${s.category}</span>` : ''}
+        <span class="s-emo">${emo}</span>
+      </div>
+      <div class="s-q">${s.question || '—'}</div>
+      <div class="s-news ${cls}">📰 ${newsLink}</div>
+      <div class="s-meta">
+        <span>情感 <strong class="${cls}">${sign(s.sentiment)}</strong></span>
+        <span>Nudge <strong>${sign(s.probNudge)}</strong></span>
+        <span>${s.sources ?? '—'} 條新聞</span>
+      </div>
+      ${s.summary ? `<div class="muted" style="font-size:11px;margin-top:6px;line-height:1.35">${s.summary}</div>` : ''}
+      <div class="muted" style="font-size:10px;margin-top:4px">${fmtTime(s.at)}</div>
+    </div>`;
+  }).join('');
+}
+
 function renderDeathStats(stats) {
   const el = document.getElementById('death-stats');
   const causes = Object.entries(stats.byCause ?? {}).sort((a, b) => b[1] - a[1]);

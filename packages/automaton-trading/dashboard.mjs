@@ -104,17 +104,22 @@ const round2 = (value) => Math.round(num(value) * 100) / 100;
 // ---------------------------------------------------------------------------
 
 function computeEquity(agentLedger) {
-  if (!agentLedger) return { equityUsd: 0, cashUsd: 0, positionsValueUsd: 0 };
+  if (!agentLedger) return { equityUsd: 0, cashUsd: 0, positionsValueUsd: 0, positionsCostUsd: 0, unrealizedPlUsd: 0 };
   const cash = num(agentLedger.cashUsd);
   let positionsValue = 0;
+  let positionsCost = 0;
   for (const position of Object.values(agentLedger.positions ?? {})) {
     const mark = num(agentLedger.markPrices?.[position.symbol] ?? position.avgPriceUsd, 0);
-    positionsValue += num(position.qty) * mark * num(position.multiplier, 1);
+    const qty = num(position.qty);
+    positionsValue += qty * mark * num(position.multiplier, 1);
+    positionsCost += qty * num(position.avgPriceUsd, 0) * num(position.multiplier, 1);
   }
   return {
     equityUsd: round2(cash + positionsValue),
     cashUsd: round2(cash),
     positionsValueUsd: round2(positionsValue),
+    positionsCostUsd: round2(positionsCost),
+    unrealizedPlUsd: round2(positionsValue - positionsCost),
   };
 }
 
@@ -189,6 +194,8 @@ function buildAgents(registry, ledger, marketMap = {}) {
       equityUsd: equity.equityUsd,
       cashUsd: equity.cashUsd,
       positionsValueUsd: equity.positionsValueUsd,
+      unrealizedPlUsd: equity.unrealizedPlUsd,
+      totalPlUsd: round2(led.realizedPlUsd + equity.unrealizedPlUsd),
       positions: Object.values(led.positions ?? {}).map((position) => ({
         symbol: position.symbol,
         assetClass: position.assetClass ?? 'us_equity',
@@ -435,7 +442,32 @@ function buildPayload() {
     equityCurve: buildEquityCurve(),
     generationTree: buildGenerationTree(registry),
     deathStats: buildDeathStats(registry, traces),
+    // Scout Bot sentiment signals (symbol -> latest headline + sentiment + nudge).
+    scoutSignals: buildScoutSignals(),
   };
+}
+
+/**
+ * Scout Bot sentiment signals. Reads the scout_signals.json snapshot that the Scout
+ * service rebuilds after every scan. Returns an array sorted by |sentiment| desc so
+ * the most newsworthy markets float to the top of the dashboard block.
+ */
+function buildScoutSignals() {
+  const snap = readJsonSafe(path.join(STATE_DIR, 'scout_signals.json'), { signals: {} });
+  const signals = Object.values(snap?.signals ?? {}).map((s) => ({
+    symbol: s.symbol,
+    question: s.question,
+    category: s.category,
+    headline: s.headline,
+    headlineUrl: s.headlineUrl,
+    sentiment: Number(s.sentiment),
+    probNudge: Number(s.probNudge),
+    summary: s.summary,
+    sources: Number(s.sources),
+    at: s.at,
+  }));
+  signals.sort((a, b) => Math.abs(b.sentiment) - Math.abs(a.sentiment));
+  return signals;
 }
 
 // ---------------------------------------------------------------------------

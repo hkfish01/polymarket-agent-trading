@@ -76,11 +76,16 @@ export function parseOccSymbol(symbol) {
   };
 }
 
-/** 'us_equity' | 'us_option' from an assetClass hint + symbol (OCC symbols are options). */
+/** 'us_equity' | 'us_option' | 'polymarket_outcome' from an assetClass hint + symbol. */
 export function normaliseAssetClass(assetClass, symbol) {
   const raw = String(assetClass ?? '').trim().toLowerCase();
   if (['option', 'options', 'us_option', 'option_contract', 'us_option_contract'].includes(raw)) {
     return 'us_option';
+  }
+  // Polymarket outcome markets: fractional YES/NO shares, fractional shorts allowed
+  // (a short-YES is economically buying NO). Never treated as a whole-share equity.
+  if (['polymarket', 'polymarket_outcome', 'outcome', 'prediction_market'].includes(raw)) {
+    return 'polymarket_outcome';
   }
   if (raw !== '' && !['equity', 'stock', 'us_equity', 'us_stock'].includes(raw)) {
     // Unknown classes are treated as equity here; the BRAKES D2 gate refuses them.
@@ -484,8 +489,10 @@ export function createLedger({ paths, config, clock } = {}) {
     const notionalUsd = round2(quantity * price * multiplier);
 
     // Whole-share rule for stock shorts (a fractional long is fine; a fractional short is not).
+    // Polymarket outcome markets allow fractional shorts (short-YES = long-NO), so exempt them.
     const resultingQty = round4(priorQty + delta);
-    if (!isOption && resultingQty < 0 && Math.abs(resultingQty - Math.round(resultingQty)) > 1e-6) {
+    const wholeShareRequired = !isOption && assetClass !== 'polymarket_outcome';
+    if (wholeShareRequired && resultingQty < 0 && Math.abs(resultingQty - Math.round(resultingQty)) > 1e-6) {
       fail('CONFIG_INVALID', 'short stock positions require whole shares', {
         agentId,
         symbol,

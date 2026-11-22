@@ -17,6 +17,8 @@
 
 import { fail } from './contracts.js';
 import { sizeJudgment } from './polymarket-genome.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const SYSTEM_PROMPT = `You are a probability estimator for prediction markets.
 IMPORTANT: Your output MUST be a single JSON object and NOTHING else. No preamble, no thinking out loud, no explanation before or after. Just the JSON.
@@ -42,7 +44,7 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
  * }} deps
  * @returns {{ runForAgent: Function, describe: Function }}
  */
-export function createProbTrader({ broker, ledger, brakes, config, generate, clock } = {}) {
+export function createProbTrader({ broker, ledger, brakes, config, generate, clock, paths } = {}) {
   if (!broker || typeof broker.submitOrder !== 'function') {
     fail('CONFIG_INVALID', 'createProbTrader requires a broker with submitOrder()');
   }
@@ -69,6 +71,25 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
   const slippageBps = num(config.sim?.slippageBps, 8);
   const systemClock = clock ?? { now: () => Date.now(), iso: () => new Date().toISOString() };
 
+  // Scout Bot signals (optional): if the Scout service has written scout_signals.json
+  // into the state dir, we feed the latest headline + sentiment for each market into
+  // the LLM prompt, so the probability estimate conditions on real news, not just the
+  // model's parametric memory. Signals are best-effort — absence is fine.
+  const scoutFile = paths?.stateDir
+    ? path.join(paths.stateDir, 'scout_signals.json')
+    : null;
+  let scoutSignals = {};
+
+  function loadScoutSignals() {
+    if (!scoutFile || !fs.existsSync(scoutFile)) return;
+    try {
+      const snap = JSON.parse(fs.readFileSync(scoutFile, 'utf8'));
+      scoutSignals = snap?.signals ?? {};
+    } catch {
+      scoutSignals = {}; // corrupt/missing snapshot -> trade without news context
+    }
+  }
+
   /**
    * Run one LLM probability evaluation cycle for one agent.
    * @param {object} agent  registry agent record (has .genome, .symbols, .id, .equityUsd)
@@ -83,6 +104,8 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
     const basket = Array.isArray(agent.symbols) && agent.symbols.length > 0
       ? agent.symbols
       : (Array.isArray(genome.symbols) ? genome.symbols : []);
+    // Refresh Scout signals each run so the LLM sees the freshest headlines.
+    loadScoutSignals();
     const result = {
       agentId,
       actions: [],
@@ -143,7 +166,8 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
       result.llmCalls += 1;
       let llmReply;
       try {
-        const user = buildQuestionPrompt(market.question, market.category, marketPrice);
+        const scout = scoutSignals[market.symbol] ?? null;
+        const user = buildQuestionPrompt(market.question, market.category, marketPrice, scout);
         const generated = await generate({
           system: SYSTEM_PROMPT,
           user,
@@ -169,6 +193,7 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
       const confidence = llmReply.confidence;
       const edge = ourProbability - marketPrice; // positive = undervalued YES, negative = overvalued YES
 
+      const scout = scoutSignals[market.symbol] ?? null;
       result.actions.push({
         type: 'evaluate',
         symbol: market.symbol,
@@ -178,6 +203,9 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
         confidence: Number(confidence.toFixed(3)),
         edge: Number(edge.toFixed(4)),
         reasoning: llmReply.reasoning ?? '',
+        // Track whether this estimate was conditioned on a Scout Bot headline.
+        scoutUsed: Boolean(scout?.headline),
+        scoutSentiment: scout ? Number(scout.sentiment) : null,
       });
 
       // 3) Filter by edge and confidence.
@@ -295,10 +323,20 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
     return result;
   }
 
-  function buildQuestionPrompt(question, category, marketPrice) {
+  function buildQuestionPrompt(question, category, marketPrice, scout = null) {
+    let newsBlock = '';
+    if (scout && scout.headline) {
+      const ageH = scout.at ? (Date.now() - new Date(scout.at).getTime()) / 3600000 : null;
+      const age = ageH !== null && Number.isFinite(ageH) ? ` (${ageH < 1 ? '<1' : Math.round(ageH)}h ago)` : '';
+      newsBlock = `
+Recent news (Scout Bot): "${scout.headline}"
+News sentiment for YES: ${scout.sentiment >= 0 ? '+' : ''}${Number(scout.sentiment).toFixed(2)} (scale -1 to +1)
+${scout.summary ? `News summary: ${scout.summary}\n` : ''}
+Use this news to inform your estimate. If the news is stale or irrelevant, rely on base rates instead.`;
+    }
     return `Market: ${question}
 Category: ${category}
-Current market-implied probability: ${(marketPrice * 100).toFixed(1)}%
+Current market-implied probability: ${(marketPrice * 100).toFixed(1)}%${newsBlock}
 
 Estimate the TRUE probability that this event happens. Consider recent news, base rates, and any relevant context you know. Reply with JSON only.`;
   }

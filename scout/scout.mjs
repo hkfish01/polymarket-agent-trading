@@ -190,6 +190,48 @@ async function saveSignal(client, signal) {
   );
 }
 
+/**
+ * Maintain a JSON snapshot of the latest signal per symbol in the state volume.
+ * The engine (prob-trader) and dashboard both mount /app/state read-only, so this
+ * file lets them consume signals without needing a Postgres client. Rebuilt after
+ * every scan from the DB (source of truth) so it stays consistent.
+ */
+async function writeSnapshot() {
+  const p = await getPool();
+  const client = await p.connect();
+  try {
+    // Latest row per symbol (tie-break on id so repeats within the same second resolve).
+    const { rows } = await client.query(
+      `SELECT DISTINCT ON (symbol)
+         symbol, question, category, headline, headline_url,
+         sentiment, prob_nudge, summary, sources, at
+       FROM scout_signals
+       ORDER BY symbol, at DESC, id DESC`,
+    );
+    const out = {};
+    for (const row of rows) {
+      out[row.symbol] = {
+        symbol: row.symbol,
+        question: row.question,
+        category: row.category,
+        headline: row.headline,
+        headlineUrl: row.headline_url,
+        sentiment: Number(row.sentiment),
+        probNudge: Number(row.prob_nudge),
+        summary: row.summary,
+        sources: Number(row.sources),
+        at: row.at instanceof Date ? row.at.toISOString() : String(row.at),
+      };
+    }
+    const file = path.join(STATE_DIR, 'scout_signals.json');
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ generatedAt: new Date().toISOString(), signals: out }, null, 2));
+    fs.renameSync(tmp, file);
+  } finally {
+    client.release();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main scan loop
 // ---------------------------------------------------------------------------
@@ -250,6 +292,14 @@ async function scanOnce() {
     }
   }
   console.log(`[scout] scan done: ${ok} ok, ${skip} skip, ${err} err`);
+  // Rebuild the JSON snapshot so engine (prob-trader) and dashboard can read signals
+  // from the read-only state volume without needing a Postgres client.
+  try {
+    await writeSnapshot();
+    console.log('[scout] snapshot written');
+  } catch (e) {
+    console.log('[scout] snapshot error:', String(e?.message ?? e));
+  }
 }
 
 async function main() {
