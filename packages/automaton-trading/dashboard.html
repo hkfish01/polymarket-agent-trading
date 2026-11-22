@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MEAT 交易儀表板</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --accent: #2f6feb;
+    --green: #1a7f37;
+    --red: #c62828;
+    --amber: #b26a00;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  .pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #eef2ff;
+    color: var(--accent);
+  }
+  .pill.ok { background: #e6f4ea; color: var(--green); }
+  .pill.warn { background: #fff4e5; color: var(--amber); }
+  .pill.dead { background: #fdecea; color: var(--red); }
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .kpi .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .kpi .value { font-size: 22px; font-weight: 600; font-family: var(--mono); }
+  .kpi .value small { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .section h2 {
+    margin: 0;
+    padding: 14px 16px;
+    font-size: 15px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    background: #fafbfc;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; background: #fafbfc; position: sticky; top: 0; }
+  td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+  tr.dead-agent { opacity: 0.55; }
+  .agent-name { font-weight: 600; }
+  .agent-id { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+  .positions { font-family: var(--mono); font-size: 12px; }
+  .position { margin: 2px 0; }
+  .verdict { font-weight: 600; }
+  .stance { font-weight: 600; }
+  /* stance colors: make the brain's read obvious at a glance */
+  .stance.s-bullish, .stance.s-buy, .stance.s-long { color: var(--ok); }
+  .stance.s-bearish, .stance.s-sell, .stance.s-short { color: var(--dead); }
+  .stance.s-cautious, .stance.s-hold, .stance.s-neutral { color: #b58900; }
+  .stance.s-reduce, .stance.s-trim { color: #d97706; }
+  .stance.s-none, .stance.s-unknown { color: var(--muted); font-weight: 500; }
+  /* near-death warning: whole overview row goes red */
+  tr.warn-row { background: rgba(207, 34, 46, 0.07); }
+  tr.warn-row td { border-left: 3px solid var(--dead); }
+  tr.warn-row .agent-name::after {
+    content: '⚠'; margin-left: 6px; color: var(--dead); font-size: 12px;
+  }
+  /* sortable overview header */
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--accent); }
+  th.sortable .sort-arrow { opacity: 0.35; margin-left: 3px; font-size: 9px; }
+  th.sortable.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+  /* collapsible sections */
+  .sec-head { display: flex; align-items: center; cursor: pointer; user-select: none; }
+  .sec-head h2 { margin: 0; }
+  .sec-toggle {
+    margin-left: auto; border: 1px solid var(--border); background: var(--bg);
+    color: var(--muted); border-radius: 5px; width: 26px; height: 26px;
+    font-size: 15px; line-height: 1; cursor: pointer; display: grid; place-items: center;
+  }
+  .sec-toggle:hover { color: var(--accent); border-color: var(--accent); }
+  .sec-body.collapsed { display: none; }
+  .msg-list { font-size: 12px; }
+  .msg-list li { margin-bottom: 6px; }
+  .msg-time { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+  .muted { color: var(--muted); }
+  .tokens-cell { font-family: var(--mono); font-size: 12px; }
+  .tokens-cell .in { color: var(--accent); }
+  .tokens-cell .out { color: #8250df; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+  details[open] summary { margin-bottom: 8px; }
+  footer { padding: 12px 24px; color: var(--muted); font-size: 12px; text-align: center; }
+  .refresh-note { font-size: 12px; color: var(--muted); }
+  /* --- equity curve --- */
+  .chart-wrap { padding: 8px 16px 16px; }
+  .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .chart-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .chart-legend .l-alloc { background: var(--accent); }
+  .chart-legend .l-acct { background: #8250df; }
+  .chart-axis { stroke: var(--border); stroke-width: 1; }
+  .chart-grid { stroke: var(--border); stroke-width: 0.5; stroke-dasharray: 3 3; opacity: 0.6; }
+  .chart-label { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
+  /* --- generation tree --- */
+  .gen-tree { padding: 8px 16px 16px; font-size: 13px; }
+  .gen-node { margin-left: 0; padding: 3px 0; }
+  .gen-node .gen-badge { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-right: 6px; }
+  .gen-node .gen-line { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-left: 4px; }
+  .gen-children { border-left: 1px dashed var(--border); margin-left: 14px; padding-left: 14px; }
+  .gen-root { font-weight: 600; }
+  /* --- death stats --- */
+  .death-bars { padding: 8px 16px 16px; }
+  .death-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 13px; }
+  .death-bar-label { width: 140px; font-family: var(--mono); font-size: 12px; }
+  .death-bar-track { flex: 1; height: 16px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+  .death-bar-fill { height: 100%; background: var(--dead); border-radius: 3px; }
+  .death-bar-count { width: 30px; text-align: right; font-family: var(--mono); font-weight: 600; }
+  .death-list { font-size: 12px; }
+  .death-list .cause { color: var(--dead); font-family: var(--mono); }
+  .death-empty { color: var(--ok); padding: 16px; font-size: 13px; }
+  /* --- agent detail modal --- */
+  .agent-row { cursor: pointer; }
+  .agent-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.45); overflow-y: auto; padding: 32px 16px;
+  }
+  .modal-backdrop.open { display: block; }
+  .modal {
+    max-width: 1100px; margin: 0 auto; background: var(--panel, #fff);
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  }
+  .modal-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--panel, #fff); z-index: 2;
+  }
+  .modal-head h2 { margin: 0; font-size: 17px; }
+  .modal-close {
+    margin-left: auto; border: 1px solid var(--border); background: var(--bg);
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+  }
+  .modal-body { padding: 16px 20px 24px; }
+  .detail-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr));
+    gap: 10px; margin-bottom: 18px;
+  }
+  .detail-cell { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .detail-cell .k { font-size: 11px; color: var(--muted); }
+  .detail-cell .v { font-size: 14px; font-weight: 600; font-family: var(--mono); }
+  .detail-section h3 { font-size: 13px; margin: 18px 0 8px; }
+  .params-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr));
+    gap: 8px; font-size: 12px;
+  }
+  .param-item { display: flex; justify-content: space-between; gap: 8px;
+    border-bottom: 1px dotted var(--border); padding: 3px 0; }
+  .param-item .pk { color: var(--muted); }
+  .param-item .pv { font-family: var(--mono); font-weight: 600; }
+  .fills-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .fills-table th, .fills-table td { text-align: right; padding: 5px 8px;
+    border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .fills-table th { color: var(--muted); font-weight: 600; }
+  .fills-table .side-buy { color: var(--accent); }
+  .fills-table .side-sell { color: #cf222e; }
+  .fills-table .q-cell { text-align: left; max-width: 360px; }
+  .fills-table .q-text { font-size: 12px; line-height: 1.3; }
+  .fills-table .q-cat {
+    font-size: 10px; color: var(--muted); font-family: var(--mono);
+    text-transform: uppercase; letter-spacing: 0.04em; margin-top: 1px;
+  }
+  .market-link {
+    font-family: var(--mono); font-weight: 600; color: var(--accent);
+    text-decoration: none; white-space: nowrap;
+  }
+  .market-link:hover { text-decoration: underline; }
+  .equity-mini { width: 100%; height: 160px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MEAT 交易儀表板</h1>
+  <span class="pill" id="treasury-pill">—</span>
+  <span class="sub" id="mode-info">—</span>
+  <span class="spacer"></span>
+  <span class="refresh-note">自動刷新 15s · 更新於 <span id="updated">—</span></span>
+</header>
+<main>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="section">
+    <div class="sec-head" data-sec="curve"><h2>歷史權益曲線</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
+    <div class="sec-body chart-wrap">
+      <div class="chart-legend">
+        <span><span class="dot l-alloc"></span>種群已配置資金 (USD)</span>
+        <span><span class="dot l-acct"></span>帳戶總權益 (USD)</span>
+        <span class="muted" id="curve-range"></span>
+      </div>
+      <svg id="equity-chart" viewBox="0 0 900 220" preserveAspectRatio="none" style="width:100%;height:220px"></svg>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head" data-sec="gentree"><h2>Agent 世代樹</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
+    <div class="sec-body">
+      <div class="muted" style="font-size:12px;padding:8px 16px 0">Agent 繁殖家譜：顯示每個 agent 是由誰（父節點）繁殖出來、目前是第幾代（genN）。獲利的 agent 會被引擎複製出「子代」繼承策略基因，虧損過多的會死亡被淘汰——所以樹狀結構能看出哪些策略血脈被延續、哪些已斷絕。</div>
+      <div class="gen-tree" id="gen-tree"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head" data-sec="deaths"><h2>死亡統計</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
+    <div class="sec-body death-bars" id="death-stats"></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head" data-sec="overview"><h2>Agent 總覽</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
+    <div class="sec-body" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th class="sortable" data-key="name">Agent<span class="sort-arrow"></span></th>
+            <th class="sortable" data-key="status">狀態<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="equityUsd">權益 (USD)<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="cashUsd">現金<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="positionsValueUsd">持倉市值<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="realizedPlUsd">已實現盈虧<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="trades">交易數<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="costsUsd">成本<span class="sort-arrow"></span></th>
+            <th>持倉</th>
+            <th class="sortable num" data-key="msgCount">訊息數<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="tokens">Token (入/出)<span class="sort-arrow"></span></th>
+            <th class="sortable num" data-key="realRmb">真實花費 RMB<span class="sort-arrow"></span></th>
+            <th>最新研究判斷</th>
+            <th>最新大腦立場</th>
+          </tr>
+        </thead>
+        <tbody id="agent-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head" data-sec="messages"><h2>Agent 訊息明細（研究簡報 + 大腦決策）</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
+    <div class="sec-body" id="agent-messages" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;padding:16px"></div>
+  </div>
+</main>
+
+<!-- Agent 交易詳情彈層 -->
+<div class="modal-backdrop" id="agent-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modal-title">—</h2>
+      <span id="modal-status"></span>
+      <button class="modal-close" id="modal-close">關閉 ✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+<footer>MEAT · Mortality Engineered Auto-Trading · 唯讀監控面板（無下單／轉帳能力）</footer>
+
+<script>
+const usd = (v, d = 2) => (Number.isFinite(v) ? '$' + Number(v).toFixed(d) : '—');
+const rmb = (v, d = 4) => (Number.isFinite(v) ? '¥' + Number(v).toFixed(d) : '—');
+const cls = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
+
+// Map a brain stance string to a CSS class so the read is color-coded at a glance.
+const STANCE_CLASS = {
+  bullish: 's-bullish', buy: 's-buy', long: 's-long', accumulate: 's-bullish',
+  bearish: 's-bearish', sell: 's-sell', short: 's-short',
+  cautious: 's-cautious', hold: 's-hold', neutral: 's-neutral',
+  reduce: 's-reduce', trim: 's-reduce',
+  none: 's-none', unknown: 's-unknown',
+};
+const stanceClass = (stance) => {
+  if (!stance) return 's-none';
+  return STANCE_CLASS[String(stance).trim().toLowerCase()] ?? 's-neutral';
+};
+
+// --- overview sorting state (default: biggest realized P&L first) ---
+const sortState = { key: 'realizedPlUsd', dir: 'desc' };
+let lastAgents = [];
+
+// Numeric/string field accessor for sorting.
+function sortValue(agent, key) {
+  switch (key) {
+    case 'name': return (agent.name ?? agent.id ?? '').toLowerCase();
+    case 'status': return agent.status ?? '';
+    case 'msgCount': return (agent.researchMessageCount ?? 0) + (agent.brainMessageCount ?? 0);
+    case 'tokens': return agent.tokens?.totalTokens ?? 0;
+    case 'realRmb': return agent.tokens?.realRmb ?? 0;
+    default: return Number(agent[key] ?? 0);
+  }
+}
+function sortedAgents(agents) {
+  const { key, dir } = sortState;
+  const mult = dir === 'asc' ? 1 : -1;
+  return agents.slice().sort((a, b) => {
+    const va = sortValue(a, key);
+    const vb = sortValue(b, key);
+    if (typeof va === 'string' || typeof vb === 'string') {
+      return String(va).localeCompare(String(vb)) * mult;
+    }
+    return (va - vb) * mult;
+  });
+}
+
+// Near-death detection: equity is close to the death floor (deathFloorPct of endowment).
+const deathFloorPct = 0.05; // mirrors config.deathFloorPct
+function isNearDeath(agent) {
+  if (agent.status !== 'alive') return false;
+  const endow = Number(agent.endowmentUsd ?? 0);
+  if (!(endow > 0)) return false;
+  const floor = endow * deathFloorPct;
+  const equity = Number(agent.equityUsd ?? 0);
+  // Warn when equity has fallen to <= 25% of start OR is within 2x the hard floor.
+  return equity <= endow * 0.25 || equity <= floor * 2;
+}
+
+function pill(text, kind) {
+  return `<span class="pill ${kind}">${text}</span>`;
+}
+
+function render(payload) {
+  const { summary, treasury, pricing, equityCurve, generationTree, deathStats } = payload;
+  const agents = sortedAgents(payload.agents ?? []);
+  lastAgents = agents;
+  window.__agents = agents; // cache for the click-to-detail modal
+  // Real-money context: credits remaining on the operator's topup (worst-case cache-miss billing).
+  const topupCredits = pricing?.topupCredits ?? null;
+  const usedCredits = summary.totalRealCredits ?? 0;
+  const remainCredits = topupCredits != null ? Math.max(0, topupCredits - usedCredits) : null;
+  const remainPct = topupCredits ? (usedCredits / topupCredits) * 100 : null;
+  document.getElementById('mode-info').textContent =
+    `模式 ${payload.treasury?.mode ?? '—'} · 種群 ${summary.aliveCount} 活 / ${summary.deadCount} 死` +
+    (pricing?.inputBillingAssumption ? ` · 計費假設：輸入按${pricing.inputBillingAssumption}` : '') +
+    (payload.summary.lastTickAt ? ` · 上次 tick ${new Date(payload.summary.lastTickAt).toLocaleTimeString('zh-TW')}` : '');
+  const tState = summary.lastTickTreasuryState ?? '—';
+  document.getElementById('treasury-pill').outerHTML = (() => {
+    const kind = tState === 'STABLE' ? 'ok' : tState === 'DEAD' ? 'dead' : 'warn';
+    return `<span class="pill ${kind}" id="treasury-pill">${tState}</span>`;
+  })();
+  document.getElementById('updated').textContent = new Date(payload.generatedAt).toLocaleTimeString('zh-TW');
+
+  document.getElementById('kpis').innerHTML = [
+    { label: '總權益', value: usd(summary.totalEquityUsd) },
+    { label: '活 / 死 Agent', value: `${summary.aliveCount}<small> / ${summary.deadCount}</small>` },
+    { label: '已實現盈虧', value: usd(summary.totalRealizedPlUsd), cls: cls(summary.totalRealizedPlUsd) },
+    { label: '總交易數', value: String(summary.totalTrades) },
+    { label: '訊息總數（研究+大腦）', value: `${summary.researchMessageCount}<small> / ${summary.brainMessageCount}</small>` },
+    { label: 'Token 總消耗', value: summary.totalTokens.toLocaleString() },
+    { label: '真實花費 RMB', value: rmb(summary.totalRealRmb), cls: 'warn' },
+    {
+      label: '剩餘積分',
+      value: remainCredits != null
+        ? `${remainCredits.toLocaleString()}<small> / ${topupCredits.toLocaleString()}</small>${remainPct != null ? `<div style="font-size:11px;color:var(--muted)">已用 ${remainPct.toFixed(1)}%</div>` : ''}`
+        : '—',
+      cls: remainPct != null && remainPct > 80 ? 'dead' : remainPct != null && remainPct > 50 ? 'warn' : '',
+    },
+  ].map(k => `<div class="kpi"><div class="label">${k.label}</div><div class="value ${k.cls || ''}">${k.value}</div></div>`).join('');
+
+  document.getElementById('agent-rows').innerHTML = agents.map(a => {
+    const nearDeath = isNearDeath(a);
+    const rowCls = [
+      a.status === 'dead' ? 'dead-agent' : '',
+      nearDeath ? 'warn-row' : '',
+      'agent-row',
+    ].filter(Boolean).join(' ');
+    const rowTitle = nearDeath
+      ? '⚠ 接近死亡線：權益已接近淘汰地板（點擊查看詳情）'
+      : '點擊查看交易詳情';
+    const status = a.status === 'alive'
+      ? pill('存活', 'ok')
+      : pill(`死亡${a.cause ? '·' + a.cause : ''}`, 'dead');
+    const positions = a.positions.length === 0
+      ? '<span class="muted">空倉</span>'
+      : a.positions.map(p => {
+          const side = p.qty > 0 ? '多' : '空';
+          const pl = (p.markUsd - p.avgPriceUsd) * p.qty * p.multiplier;
+          return `<div class="position">${side} ${p.symbol} ${Math.abs(p.qty).toFixed(4)} @${p.avgPriceUsd.toFixed(2)}<span class="${cls(pl)}"> (${pl >= 0 ? '+' : ''}${pl.toFixed(2)})</span></div>`;
+        }).join('');
+    const research = a.latestResearch
+      ? `<div><span class="verdict">${a.latestResearch.verdict ?? '—'}</span> <span class="muted">信心 ${(a.latestResearch.confidence * 100).toFixed(0)}%</span></div><div class="muted" style="font-size:11px">${(a.latestResearch.summary ?? '').slice(0, 80)}</div>`
+      : '<span class="muted">暫無</span>';
+    const brain = a.latestBrain
+      ? `<div><span class="stance ${stanceClass(a.latestBrain.stance)}">${a.latestBrain.stance ?? '—'}</span> <span class="muted">信心 ${(a.latestBrain.confidence * 100).toFixed(0)}%</span></div><div class="muted" style="font-size:11px">${(a.latestBrain.thesis ?? '').slice(0, 80)}</div>`
+      : '<span class="muted">暫無</span>';
+    return `<tr class="${rowCls}" data-agent="${a.id}" title="${rowTitle}">
+      <td><div class="agent-name">${a.name ?? '(未命名)'}</div><div class="agent-id">${a.id} · gen${a.generation}</div></td>
+      <td>${status}</td>
+      <td class="num">${usd(a.equityUsd)}</td>
+      <td class="num">${usd(a.cashUsd)}</td>
+      <td class="num">${usd(a.positionsValueUsd)}</td>
+      <td class="num ${cls(a.realizedPlUsd)}">${usd(a.realizedPlUsd)}</td>
+      <td class="num">${a.trades}</td>
+      <td class="num">${usd(a.costsUsd, 4)}</td>
+      <td class="positions">${positions}</td>
+      <td class="num">${a.researchMessageCount} / ${a.brainMessageCount}</td>
+      <td class="num tokens-cell"><span class="in">↓${a.tokens.inputTokens.toLocaleString()}</span> <span class="out">↑${a.tokens.outputTokens.toLocaleString()}</span></td>
+      <td class="num"><span title="輸入 ¥${a.tokens.inputRmb.toFixed(4)} + 輸出 ¥${a.tokens.outputRmb.toFixed(4)}">${rmb(a.tokens.realRmb)}</span><div class="muted" style="font-size:11px">${a.tokens.realCredits.toLocaleString()} 積分</div></td>
+      <td>${research}</td>
+      <td>${brain}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('agent-messages').innerHTML = agents.map(a => {
+    const researchRows = a.latestResearch ? `
+      <li><span class="msg-time">${new Date(a.latestResearch.at).toLocaleString('zh-TW')}</span><br>
+        <span class="verdict">${a.latestResearch.verdict}</span> · 情緒 ${a.latestResearch.sentiment.toFixed(2)} · 信心 ${(a.latestResearch.confidence*100).toFixed(0)}% · 新聞 ${a.latestResearch.newsCount} 條<br>
+        <span class="muted">${a.latestResearch.summary ?? ''}</span></li>` : '<li class="muted">暫無研究簡報</li>';
+    const brainRows = a.latestBrain ? `
+      <li><span class="msg-time">${new Date(a.latestBrain.at).toLocaleString('zh-TW')}</span><br>
+        <span class="stance ${stanceClass(a.latestBrain.stance)}">${a.latestBrain.stance}</span> · 信心 ${(a.latestBrain.confidence*100).toFixed(0)}% · 出場壓力 ${a.latestBrain.exitPressure}<br>
+        <span class="muted">${(a.latestBrain.thesis ?? '').slice(0, 160)}</span></li>` : '<li class="muted">暫無大腦決策</li>';
+    return `<div class="section" style="margin:0">
+      <h2 style="font-size:13px">${a.name ?? a.id} ${a.status === 'dead' ? pill('死亡', 'dead') : pill('存活', 'ok')}</h2>
+      <div style="padding:12px 16px">
+        <div class="tokens-cell" style="margin-bottom:10px">
+          Token: <span class="in">↓${a.tokens.inputTokens.toLocaleString()}</span> /
+          <span class="out">↑${a.tokens.outputTokens.toLocaleString()}</span> ·
+          呼叫 ${a.tokens.calls} 次 ·
+          真實花費 <strong>${rmb(a.tokens.realRmb)}</strong>（${a.tokens.realCredits.toLocaleString()} 積分 ·
+          輸入 ¥${a.tokens.inputRmb.toFixed(4)} / 輸出 ¥${a.tokens.outputRmb.toFixed(4)}）
+        </div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px">研究簡報（共 ${a.researchMessageCount} 條）</div>
+        <ul class="msg-list">${researchRows}</ul>
+        <div style="font-size:12px;font-weight:600;margin:10px 0 4px">大腦決策（共 ${a.brainMessageCount} 條）</div>
+        <ul class="msg-list">${brainRows}</ul>
+      </div>
+    </div>`;
+  }).join('');
+
+  // New analytical views.
+  renderEquityCurve(equityCurve ?? []);
+  renderGenerationTree(generationTree ?? { roots: [], nodes: [] });
+  renderDeathStats(deathStats ?? { totalDeaths: 0, byCause: {}, deaths: [], aliveByGeneration: {} });
+
+  // Bind click-to-detail on agent rows.
+  document.querySelectorAll('.agent-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const agent = (window.__agents ?? []).find(a => a.id === row.dataset.agent);
+      if (agent) openAgentModal(agent);
+    });
+  });
+}
+
+/** Open the agent detail modal with overview, params, equity mini-chart, fills, events. */
+function openAgentModal(agent) {
+  const modal = document.getElementById('agent-modal');
+  document.getElementById('modal-title').textContent =
+    `${agent.name ?? agent.id} · gen${agent.generation}`;
+  document.getElementById('modal-status').innerHTML =
+    agent.status === 'alive' ? pill('存活', 'ok') : pill(`死亡·${agent.cause ?? '?'}`, 'dead');
+  document.getElementById('modal-body').innerHTML = renderAgentDetail(agent);
+  modal.classList.add('open');
+}
+function closeModal() {
+  document.getElementById('agent-modal').classList.remove('open');
+}
+
+/** Build the detail body: overview cells + read-only params + equity chart + fills + events. */
+function renderAgentDetail(a) {
+  // --- overview cells ---
+  const cells = [
+    ['權益', usd(a.equityUsd)],
+    ['現金', usd(a.cashUsd)],
+    ['持倉市值', usd(a.positionsValueUsd)],
+    ['已實現盈虧', usd(a.realizedPlUsd)],
+    ['起始資金', usd(a.endowmentUsd)],
+    ['交易數', String(a.trades)],
+    ['營運成本', usd(a.costsUsd)],
+    ['研究/大腦訊息', `${a.researchMessageCount} / ${a.brainMessageCount}`],
+    ['Token 消耗', a.tokens.totalTokens.toLocaleString()],
+    ['真實花費 RMB', rmb(a.tokens.realRmb)],
+  ].map(([k, v]) => `<div class="detail-cell"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+  // --- read-only strategy params ---
+  const p = a.params ?? {};
+  const paramRows = [
+    ['策略家族', p.family ?? '—'],
+    ['關注標的', (p.symbols ?? []).join(', ') || '—'],
+    ['層級 (tier)', p.tier ?? '—'],
+    ['回看窗口 (lookback)', p.lookback ?? '—'],
+    ['進場 Z', p.entryZ ?? '—'],
+    ['出場 Z', p.exitZ ?? '—'],
+    ['止損 %', p.stopPct != null ? (p.stopPct * 100).toFixed(2) + '%' : '—'],
+    ['目標 %', p.targetPct != null ? (p.targetPct * 100).toFixed(2) + '%' : '—'],
+    ['最大持倉 K 線', p.maxHoldBars ?? '—'],
+    ['倉位比例 %', p.sizePct != null ? (p.sizePct * 100).toFixed(1) + '%' : '—'],
+    ['交易時段', p.sessionFilter ?? '—'],
+  ].map(([k, v]) => `<div class="param-item"><span class="pk">${k}</span><span class="pv">${v}</span></div>`).join('');
+
+  // --- equity mini chart (cumulative realized P&L from fills, or events) ---
+  const equityChart = renderFillsEquityChart(a.fills ?? []);
+
+  // --- fills table (enriched with market question + Polymarket link) ---
+  const fillsRows = (a.fills ?? []).map(f => {
+    const side = f.side === 'buy' ? '買入' : f.side === 'sell' ? '賣出' : (f.side ?? '—');
+    const pl = f.realizedPlUsd;
+    const symbolCell = f.link
+      ? `<a class="market-link" href="${f.link}" target="_blank" rel="noopener" title="在 Polymarket 打開此市場">${f.symbol ?? '—'} ↗</a>`
+      : (f.symbol ?? '—');
+    const questionCell = f.question
+      ? `<div class="q-text">${f.question}</div>${f.category ? `<div class="q-cat">${f.category}</div>` : ''}`
+      : '<span class="muted">—</span>';
+    return `<tr>
+      <td>${f.at ? new Date(f.at).toLocaleString('zh-TW', { hour12: false }) : '—'}</td>
+      <td>${symbolCell}</td>
+      <td class="q-cell">${questionCell}</td>
+      <td class="side-${f.side ?? ''}">${side}</td>
+      <td>${f.qty}</td>
+      <td>${usd(f.priceUsd)}</td>
+      <td>${usd(f.notionalUsd)}</td>
+      <td class="${cls(pl)}">${pl ? usd(pl) : '—'}</td>
+    </tr>`;
+  }).join('');
+  const fillsTable = fillsRows
+    ? `<table class="fills-table"><thead><tr>
+        <th>時間</th><th>標的</th><th>市場題目</th><th>方向</th><th>數量</th><th>價格</th><th>名義</th><th>實現盈虧</th>
+      </tr></thead><tbody>${fillsRows}</tbody></table>`
+    : '<div class="empty">暫無交易記錄</div>';
+
+  // --- events list ---
+  const eventRows = (a.events ?? []).slice(0, 30).map(e => `
+    <div class="param-item"><span class="pk">${e.at ? new Date(e.at).toLocaleString('zh-TW', { hour12: false }) : '—'} · ${e.kind ?? ''}</span><span class="pv ${cls(e.amountUsd)}">${usd(e.amountUsd)}</span></div>`).join('');
+  const eventsBlock = eventRows
+    ? `<div class="params-grid">${eventRows}</div>`
+    : '<div class="empty">暫無資金事件</div>';
+
+  return `
+    <div class="detail-section"><h3>概覽</h3><div class="detail-grid">${cells}</div></div>
+    <div class="detail-section"><h3>只讀策略參數（ genome ）</h3>
+      <div class="params-grid">${paramRows}</div>
+      <div class="muted" style="font-size:11px;margin-top:6px">參數由演化引擎管理，此處僅供查看，不可調整。</div>
+    </div>
+    <div class="detail-section"><h3>權益走勢（逐筆實現盈虧累計）</h3>${equityChart}</div>
+    <div class="detail-section"><h3>交易流水（最近 ${a.fills?.length ?? 0} 筆）</h3>${fillsTable}</div>
+    <div class="detail-section"><h3>資金事件（最近 30 筆）</h3>${eventsBlock}</div>
+  `;
+}
+
+/** Mini SVG equity chart built from cumulative realized P&L of the agent's fills. */
+function renderFillsEquityChart(fills) {
+  if (!fills.length) return '<div class="empty">暫無交易，無法繪製權益走勢</div>';
+  const ordered = fills.slice().sort((x, y) => new Date(x.at) - new Date(y.at));
+  // Running cumulative realized P&L.
+  let cum = 0;
+  const pts = ordered.map(f => { cum += Number(f.realizedPlUsd ?? 0); return { t: new Date(f.at).getTime(), v: cum }; });
+  const W = 900, H = 160, padL = 50, padR = 12, padT = 10, padB = 20;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const vals = pts.map(p => p.v);
+  const minV = Math.min(0, ...vals), maxV = Math.max(0, ...vals);
+  const span = (maxV - minV) || 1;
+  const lo = minV - span * 0.1, hi = maxV + span * 0.1;
+  const x = i => padL + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
+  const y = v => padT + ih - ((v - lo) / (hi - lo)) * ih;
+  const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+  const zeroY = y(0).toFixed(1);
+  let grid = `<line class="chart-axis" x1="${padL}" y1="${zeroY}" x2="${W - padR}" y2="${zeroY}" stroke-dasharray="4 3" opacity="0.7"/>`;
+  // End label
+  const lastV = pts[pts.length - 1].v;
+  const label = `<text class="chart-label" x="${x(pts.length - 1)}" y="${y(lastV)}" text-anchor="end" dominant-baseline="middle" dx="-6">${usd(lastV)}</text>`;
+  return `<svg class="equity-mini" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:160px">
+    ${grid}
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${label}
+  </svg>
+  <div class="muted" style="font-size:11px;margin-top:4px">橫軸時間（左→右），縱軸累計實現盈虧 (USD)。共 ${pts.length} 筆交易。</div>`;
+}
+
+/** Equity curve — dual-line SVG chart of population capital vs account equity over ticks. */
+function renderEquityCurve(points) {
+  const svg = document.getElementById('equity-chart');
+  const range = document.getElementById('curve-range');
+  if (!points.length) {
+    svg.innerHTML = `<text x="450" y="110" text-anchor="middle" class="chart-label">暫無 tick 歷史</text>`;
+    range.textContent = '';
+    return;
+  }
+  const W = 900, H = 220, padL = 56, padR = 12, padT = 12, padB = 26;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const allVals = points.flatMap(p => [p.allocatedUsd, p.accountEquityUsd]).filter(v => Number.isFinite(v));
+  const minV = Math.min(...allVals), maxV = Math.max(...allVals);
+  const span = (maxV - minV) || 1;
+  const lo = minV - span * 0.08, hi = maxV + span * 0.08;
+  const x = (i) => padL + (points.length === 1 ? iw / 2 : (i / (points.length - 1)) * iw);
+  const y = (v) => padT + ih - ((v - lo) / (hi - lo)) * ih;
+  const path = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(' ');
+  // Y axis grid + labels (5 ticks)
+  let grid = '';
+  for (let g = 0; g <= 4; g++) {
+    const val = lo + ((hi - lo) * g) / 4;
+    const gy = y(val).toFixed(1);
+    grid += `<line class="chart-grid" x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}"/>`;
+    grid += `<text class="chart-label" x="${padL - 6}" y="${gy}" text-anchor="end" dominant-baseline="middle">${val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(1)}</text>`;
+  }
+  // X axis time labels (first / mid / last)
+  const timeAt = (i) => { const d = new Date(points[i].t); return isNaN(d) ? '' : d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }); };
+  const xi = [0, Math.floor((points.length - 1) / 2), points.length - 1];
+  let xlabels = '';
+  for (const i of xi) xlabels += `<text class="chart-label" x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${timeAt(i)}</text>`;
+  const last = points[points.length - 1];
+  svg.innerHTML = `
+    ${grid}
+    <path d="${path('accountEquityUsd')}" fill="none" stroke="#8250df" stroke-width="1.5" opacity="0.85"/>
+    <path d="${path('allocatedUsd')}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${xlabels}
+  `;
+  range.textContent = `${points.length} ticks · 最新 ${usd(last.allocatedUsd)} 配置 / ${usd(last.accountEquityUsd)} 帳戶`;
+}
+
+/** Generation tree — indented lineage of agents built from parent/child relations. */
+function renderGenerationTree(tree) {
+  const el = document.getElementById('gen-tree');
+  const byId = new Map(tree.nodes.map(n => [n.id, n]));
+  const statusPill = (n) => n.status === 'alive'
+    ? pill('存活', 'ok')
+    : pill(n.cause ? `死亡·${n.cause}` : '死亡', 'dead');
+  const drawNode = (id, depth) => {
+    const n = byId.get(id);
+    if (!n) return '';
+    const children = (n.children ?? []).map(c => drawNode(c, depth + 1)).join('');
+    const childWrap = children ? `<div class="gen-children">${children}</div>` : '';
+    return `<div class="gen-node ${depth === 0 ? 'gen-root' : ''}">
+      <span class="gen-badge">gen${n.generation}</span>
+      ${n.name ?? n.id}
+      <span class="gen-line">${n.id}</span>
+      ${statusPill(n)}
+      <span class="muted" style="margin-left:6px">${usd(n.equityUsd)}</span>
+      ${childWrap}
+    </div>`;
+  };
+  const roots = tree.roots ?? [];
+  if (!roots.length) { el.innerHTML = '<span class="muted">暫無 agent</span>'; return; }
+  el.innerHTML = roots.map(r => drawNode(r, 0)).join('');
+}
+
+/** Death stats — cause bar chart + chronological death list. */
+function renderDeathStats(stats) {
+  const el = document.getElementById('death-stats');
+  const causes = Object.entries(stats.byCause ?? {}).sort((a, b) => b[1] - a[1]);
+  const maxCount = causes.length ? Math.max(...causes.map(c => c[1])) : 0;
+  let html = '';
+  if (!stats.totalDeaths) {
+    html += `<div class="death-empty">✓ 目前零死亡 — ${stats.aliveByGeneration && Object.keys(stats.aliveByGeneration).length ? '存活世代：' + Object.entries(stats.aliveByGeneration).map(([g, c]) => `gen${g}×${c}`).join('、') : ''}</div>`;
+  } else {
+    html += `<div style="font-size:13px;margin-bottom:8px">累計死亡 <strong>${stats.totalDeaths}</strong> 個 agent</div>`;
+    for (const [cause, count] of causes) {
+      const pct = maxCount ? (count / maxCount) * 100 : 0;
+      html += `<div class="death-bar-row">
+        <span class="death-bar-label">${cause}</span>
+        <span class="death-bar-track"><span class="death-bar-fill" style="width:${pct}%"></span></span>
+        <span class="death-bar-count">${count}</span>
+      </div>`;
+    }
+    html += `<details style="margin-top:10px"><summary>死亡明細（${stats.deaths.length}）</summary>
+      <ul class="msg-list death-list">${stats.deaths.map(d => `
+        <li><span class="msg-time">${d.diedAt ? new Date(d.diedAt).toLocaleString('zh-TW') : '—'}</span>
+          ${d.name ?? d.id} · <span class="cause">${d.cause}</span> · gen${d.generation} · 終值 ${usd(d.finalEquityUsd)}</li>`).join('')}</ul>
+    </details>`;
+  }
+  el.innerHTML = html;
+}
+
+// --- overview header sorting ---
+function updateSortArrows() {
+  document.querySelectorAll('th.sortable').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.key === sortState.key) {
+      th.classList.add('sorted');
+      arrow.textContent = sortState.dir === 'asc' ? '▲' : '▼';
+    } else {
+      th.classList.remove('sorted');
+      arrow.textContent = '↕';
+    }
+  });
+}
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortState.key === key) {
+      sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortState.key = key;
+      // Sensible default direction per column type.
+      sortState.dir = (key === 'name' || key === 'status') ? 'asc' : 'desc';
+    }
+    updateSortArrows();
+    if (window.__agents) render({ ...window.__lastPayload, agents: window.__agents });
+  });
+});
+
+// --- collapsible sections ---
+document.querySelectorAll('.sec-head').forEach(head => {
+  head.addEventListener('click', () => {
+    const body = head.parentElement.querySelector('.sec-body');
+    const btn = head.querySelector('.sec-toggle');
+    if (!body) return;
+    const collapsed = body.classList.toggle('collapsed');
+    if (btn) btn.textContent = collapsed ? '+' : '−';
+  });
+});
+
+async function load() {
+  try {
+    const response = await fetch('/api/state', { cache: 'no-store' });
+    const payload = await response.json();
+    window.__lastPayload = payload;
+    render(payload);
+  } catch (error) {
+    document.getElementById('updated').textContent = '載入失敗: ' + error.message;
+  }
+}
+// Modal close handlers.
+document.getElementById('modal-close').addEventListener('click', closeModal);
+document.getElementById('agent-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'agent-modal') closeModal(); // click backdrop only
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+updateSortArrows(); // initialize header sort indicators
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

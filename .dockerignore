@@ -1,0 +1,15 @@
+# Never bake secrets or local state into the image.
+.env
+.env.*
+!.env.example
+automaton-data/
+packages/automaton-trading/automaton-data/
+packages/automaton-trading/test/
+.git/
+.gitignore
+node_modules/
+**/node_modules/
+*.log
+reaper.log
+reaper.pid
+reaper.heartbeat.json

@@ -31,6 +31,7 @@ import { createJournal } from './journal.js';
 import { createRegistry } from './registry.js';
 import { createLedger } from './ledger.js';
 import { createBrakes } from './brakes.js';
+import { createBrakesPolymarket } from './brakes-polymarket.js';
 import { createTreasurer } from './treasurer.js';
 import { createReplicator } from './replicator.js';
 import { createProspector } from './prospector.js';
@@ -50,6 +51,7 @@ import {
   resolveInstrumentPermissions,
 } from './instruments.js';
 import { nextAgentName, usedNames } from './naming.js';
+import { createProbTrader } from './prob-trader.js';
 
 const log = createLogger('automaton');
 
@@ -125,15 +127,37 @@ function basketForAgent(config, index, tier, primary = null) {
     ? Number(portfolio.basketSizeDay) || 4
     : Number(portfolio.basketSizeSwing) || 3;
   const size = Math.max(1, Math.min(symbols.length, Math.trunc(requested)));
-  // Co-prime stride + a per-lap offset so bots with the same primary symbol still get distinct
-  // baskets (30 bots, 14 symbols -> 26 unique combinations under index*3; this yields all unique).
+
+  // Polysim category-aware basket: in broker=polysim mode each symbol encodes a
+  // Polymarket category via its prefix (PC*=crypto, PP*=politics, PE*=economics,
+  // PS*=sports, PW*=weather, PX*=other). To make each agent SPECIALIZE in one topic,
+  // its basket only draws from the same category pool as its primary symbol — never
+  // mixing crypto with politics. Detection: broker==='polysim' AND symbols match the
+  // P?+digit pattern (2-char prefix, second char is a known category letter).
+  const POLYSIM_CATEGORIES = new Set(['C', 'P', 'S', 'E', 'W', 'X']);
+  const isPolysim = String(config.broker ?? '').toLowerCase() === 'polysim'
+    && symbols.every((s) => s.length >= 2 && s[0] === 'P' && POLYSIM_CATEGORIES.has(s[1]));
+
+  let scoped;
+  if (isPolysim) {
+    const category = (symbol) => String(symbol ?? '').toUpperCase().slice(0, 2);
+    const primaryCategory = category(primary ?? symbols[0]);
+    const pool = symbols.filter((symbol) => category(symbol) === primaryCategory);
+    scoped = pool.length > 0 ? pool : symbols;
+  } else {
+    scoped = symbols;
+  }
+
+  // Co-prime stride within the scoped pool so bots sharing a category still get
+  // distinct combinations, while every basket stays inside its own topic (polysim)
+  // or spans the full symbol list (stock mode — unchanged from original).
   const start = ((Math.max(0, Number(index) || 0) * 5
-    + Math.floor(Math.max(0, Number(index) || 0) / symbols.length) * 3) % symbols.length
-    + symbols.length) % symbols.length;
+    + Math.floor(Math.max(0, Number(index) || 0) / Math.max(1, scoped.length)) * 3) % scoped.length
+    + scoped.length) % scoped.length;
   const basket = [];
-  if (primary && symbols.includes(primary)) basket.push(primary);
-  for (let offset = 0; basket.length < size && offset < symbols.length * 2; offset += 1) {
-    const symbol = symbols[(start + offset) % symbols.length];
+  if (primary && scoped.includes(primary)) basket.push(primary);
+  for (let offset = 0; basket.length < size && offset < scoped.length * 2; offset += 1) {
+    const symbol = scoped[(start + offset) % scoped.length];
     if (!basket.includes(symbol)) basket.push(symbol);
   }
   return basket;
@@ -236,6 +260,20 @@ export async function createAutomaton(options = {}) {
   const builder = createBuilder({ config, brakes, clock });
   const executor = createExecutor({ broker, brakes, ledger, config, clock });
 
+  // LLM probability trader for Polymarket outcome markets (broker=polysim only).
+  // Bypasses the technical-analysis pipeline and bets on real-world events using
+  // LLM probability estimates + Kelly sizing. Only created when the generate seam
+  // is available AND broker is polysim.
+  const isPolysim = String(config.broker ?? '').toLowerCase() === 'polysim';
+  const llmGenerate = options.researchGenerate ?? options.generate ?? null;
+  const probTrader = isPolysim && typeof llmGenerate === 'function'
+    ? createProbTrader({
+        broker, ledger, config, generate: llmGenerate, clock,
+        // Use the outcome-market brakes (no spread/quote dependency), not the stock brakes.
+        brakes: createBrakesPolymarket({ config, paths, clock }),
+      })
+    : null;
+
   const state = {
     initialized: false,
     running: false,
@@ -337,9 +375,25 @@ export async function createAutomaton(options = {}) {
     };
   }
 
-  async function writeStateFile(snapshot) {
-    await writeJsonAtomic(paths.stateFile, snapshot);
-  }
+      async function writeStateFile(snapshot) {
+        await writeJsonAtomic(paths.stateFile, snapshot);
+      }
+
+      /** Persist the broker's symbol->market snapshot (for dashboard trade labels/links). */
+      async function persistMarkets() {
+        if (typeof broker.getMarketMap !== 'function') return;
+        try {
+          const map = await broker.getMarketMap();
+          const out = {};
+          for (const market of map) out[market.symbol] = market;
+          await writeJsonAtomic(paths.markets, {
+            generatedAt: new Date().toISOString(),
+            markets: out,
+          });
+        } catch {
+          // Non-fatal: dashboard just falls back to bare symbol codes.
+        }
+      }
 
   async function appendTrace(trace) {
     await appendJsonl(paths.traces, trace);
@@ -1119,6 +1173,55 @@ export async function createAutomaton(options = {}) {
         if (!mandate || !view) continue;
         if (treasuryView.halted && !mandate.allowExitOnly) continue;
 
+        // ── POLYSIM PATH: LLM probability betting ─────────────────────────────
+        // When running with broker=polysim AND a live LLM, skip the entire technical
+        // analysis pipeline (bars→hypotheses→specs→executor). Instead, each agent:
+        //   1. Reads live probabilities from real Polymarket books
+        //   2. Asks the LLM to estimate true probability for each event
+        //   3. Sizes a Kelly bet when edge > threshold
+        //   4. Submits a simulated order and books it in the ledger
+        if (probTrader) {
+          const agentBook = ledger.snapshot(agent.id);
+          const dayStatsEntry = dayStats[agent.id] ?? { ordersCount: 0 };
+          try {
+            const ptResult = await probTrader.runForAgent({
+              agent,
+              mandate,
+              book: agentBook,
+              dayStats: dayStatsEntry,
+            });
+            const orders = (ptResult.actions ?? []).filter((a) => a.type === 'order');
+            const evals = (ptResult.actions ?? []).filter((a) => a.type === 'evaluate');
+            trace.executions.push({
+              agentId: agent.id,
+              mode: 'polysim_llm',
+              tier: agent.tier ?? 'day',
+              actions: evals.length,
+              orders: orders.length,
+              denied: (ptResult.rejected ?? []).length,
+              spentUsd: ptResult.spentUsd ?? 0,
+              llmCalls: ptResult.llmCalls ?? 0,
+              detail: [
+                ...orders.slice(0, 3).map((o) => ({
+                  type: 'order', symbol: o.symbol, reason: `${o.side} ${o.qty} @${o.priceUsd} edge=${o.edge} conf=${o.confidence}`,
+                })),
+                ...(ptResult.rejected ?? []).slice(0, 4).map((r) => ({
+                  type: 'rejected', symbol: r.detail?.split(':')[0] ?? '', reason: r.reason,
+                })),
+              ],
+            });
+            const statsEntry = state.dayStats.agents[agent.id]
+              ?? { ordersCount: 0, startEquityUsd: round2(view.equityUsd) };
+            statsEntry.ordersCount = (statsEntry.ordersCount ?? 0) + orders.length;
+            state.dayStats.agents[agent.id] = statsEntry;
+          } catch (error) {
+            trace.errors.push({
+              role: 'prob-trader', agentId: agent.id, ...errorInfo(error),
+            });
+          }
+          continue; // Skip the technical-analysis executor entirely
+        }
+
         const tier = agent.tier === 'swing' ? 'swing' : 'day';
         const tierCadence = cadence[tier];
         // When no cadence block is configured the legacy behaviour is preserved: every agent is
@@ -1402,6 +1505,7 @@ export async function createAutomaton(options = {}) {
       state.lastTickAt = new Date(clock.now()).toISOString();
       state.lastTrace = trace;
       state.lastError = null;
+      await persistMarkets();
       const snapshot = await buildSnapshot({
         account: treasuryView.account,
         treasury: treasuryView,
@@ -1898,7 +2002,12 @@ export async function createAutomaton(options = {}) {
       }
       if (state.running) {
         state.timer = setTimeout(loop, delayMs);
-        if (typeof state.timer.unref === 'function') state.timer.unref();
+        // Detach the timer from the event loop ONLY when something else holds it open —
+        // paper/live spawn the external Reaper child process, which keeps Node alive. In
+        // sim mode no Reaper runs, so the timer is the sole handle; unref-ing it would let
+        // the event loop drain and the process exit cleanly after a few ticks (observed in
+        // Docker: RestartCount climbing, exit 0, ~2-3 ticks per life). Keep it ref'd in sim.
+        if (config.mode !== 'sim' && typeof state.timer.unref === 'function') state.timer.unref();
       }
     };
     loop();

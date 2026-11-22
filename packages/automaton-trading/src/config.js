@@ -321,7 +321,11 @@ export function loadConfig(options = {}) {
     }
   }
   for (const key of Object.keys(env)) {
-    if (/^(ALPACA|AUTOMATON)_/.test(key) && typeof env[key] === 'string') {
+    // Credential families the engine understands. POLY_*/POLYMARKET_* drive the Polymarket
+    // outcome-market broker; RESEARCH_* drives the LLM research sidecar; ALPACA_*/AUTOMATON_*
+    // drive the equities broker and engine overrides. All come from process.env (which the
+    // Docker compose env_file / systemd / shell populate) and are merged over any .env file.
+    if (/^(ALPACA|AUTOMATON|POLY|POLYMARKET|RESEARCH)_/.test(key) && typeof env[key] === 'string') {
       secrets[key] = env[key];
     }
   }
@@ -585,6 +589,8 @@ export function statePaths(config) {
     registry: path.join(stateDir, 'registry.json'),
     ledger: path.join(stateDir, 'ledger.json'),
     journal: path.join(stateDir, 'obituaries.jsonl'),
+    calibration: path.join(stateDir, 'calibration.jsonl'),
+    calibrationState: path.join(stateDir, 'calibration-state.json'),
     hypothesesQueue: path.join(stateDir, 'hypotheses.json'),
     hypothesesLog: path.join(stateDir, 'hypotheses.jsonl'),
     specsDir: path.join(stateDir, 'specs'),
@@ -604,6 +610,7 @@ export function statePaths(config) {
     researchDir: path.join(stateDir, 'research'),
     researchState: path.join(stateDir, 'research', 'state.json'),
     rankings: path.join(stateDir, 'rankings.json'),
+    markets: path.join(stateDir, 'markets.json'),
     rewardsFile: path.join(stateDir, 'rewards.json'),
     settingsFile: path.join(stateDir, 'settings.json'),
   };

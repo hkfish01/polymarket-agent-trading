@@ -1,0 +1,74 @@
+{
+  "mode": "sim",
+  "broker": "polysim",
+  "cycleIntervalSec": 300,
+  "reaperIntervalSec": 30,
+  "population": { "initial": 15, "cap": 30 },
+  "endowmentUsd": 5000,
+  "deathFloorUsd": 1,
+  "deathFloorPct": 0.05,
+  "maxDrawdownPct": 0.2,
+  "burn": {
+    "inferencePerCycleUsd": 0.0002,
+    "dataPerCycleUsd": 0.00005,
+    "hostingPerHourUsd": 0.00001,
+    "committedMonthlyUsd": 0
+  },
+  "cycleBudget": { "STABLE": 4, "TIGHT": 1.5, "CRITICAL": 0.5 },
+  "replication": {
+    "surplus7dUsd": 500,
+    "minRunwayHours": 72,
+    "childEndowmentUsd": 2500
+  },
+  "account": {
+    "allocationCapPct": 0.8,
+    "reconciliationTolerancePct": 0.02
+  },
+  "risk": {
+    "maxPositionPct": 0.5,
+    "maxOpenPositions": 8,
+    "maxSpreadBps": 5000,
+    "maxDailyOrders": 40,
+    "maxDailyLossPct": 0.2,
+    "maxOrderPctOfEquity": 0.5,
+    "maxOrderNotionalUsd": 2000,
+    "minOrderNotionalUsd": 1,
+    "allowShort": false,
+    "allowMargin": false,
+    "allowOptions": false,
+    "extendedHours": true,
+    "sessionWindow": ["00:00", "23:59"],
+    "maxOrdersPerCycle": 4,
+    "maxBuildSpendPct": 0.4
+  },
+  "research": {
+    "enabled": true,
+    "influence": true,
+    "intervalSec": 3600,
+    "costPerRunUsd": 0.001,
+    "maxInputChars": 12000,
+    "maxOutputTokens": 700
+  },
+  "symbols": [
+    "PC1", "PC2", "PC3", "PC4",
+    "PP1", "PP2", "PP3",
+    "PE1", "PE2", "PE3",
+    "PS1", "PS2",
+    "PW1", "PW2",
+    "PX1"
+  ],
+  "sim": {
+    "accountEquityUsd": 100000,
+    "slippageBps": 8,
+    "commissionBps": 0
+  },
+  "polysim": {
+    "discoveryLimit": 200
+  },
+  "engine": {
+    "autoStart": false,
+    "traceLimit": 2000,
+    "tradingHoursOnly": false,
+    "offHoursIntervalSec": 300
+  }
+}

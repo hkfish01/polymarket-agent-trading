@@ -28,7 +28,9 @@ import {
 import { createAutomaton } from './orchestrator.js';
 import { createHttpResearchGenerator } from './research.js';
 import { createBroker as createAlpacaBroker } from './broker-alpaca.js';
+import { createBroker as createPolymarketBroker } from './broker-polymarket.js';
 import { createBroker as createSimBroker } from './broker-sim.js';
+import { createBroker as createPolysimBroker } from './broker-polysim.js';
 import { createJournal } from './journal.js';
 import { createBrakes } from './brakes.js';
 import {
@@ -180,8 +182,20 @@ export function createEngine(options = {}) {
 
   function makeBroker(config, secrets) {
     if (options.brokerFactory) return options.brokerFactory(config.mode, config, secrets);
+    // `broker: "polysim"` runs under `mode: "sim"` (in-process deaths, no external
+    // Reaper, no wallet) but against REAL Polymarket market data with SIMULATED fills.
+    // This is how agents trade real weather/crypto/politics/sports events without funds.
+    if (String(config.broker ?? '').toLowerCase() === 'polysim') {
+      return createPolysimBroker(config, { secrets });
+    }
     if (config.mode === 'sim') {
       return createSimBroker(config, { seed: overrides.seed ?? 7, accountEquityUsd: overrides.accountEquityUsd ?? 100000 });
+    }
+    // Venue routing: `broker: "polymarket"` selects the outcome-market broker; anything
+    // else (or unset) keeps the legacy Alpaca equities broker. `broker` is a new optional
+    // config field, so existing configs route to Alpaca unchanged.
+    if (String(config.broker ?? '').toLowerCase() === 'polymarket') {
+      return createPolymarketBroker(config, { secrets });
     }
     resolveCredentials(config, secrets); // fail fast with a precise error for missing keys/live arming
     return createAlpacaBroker(config, { secrets });

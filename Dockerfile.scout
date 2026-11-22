@@ -1,0 +1,10 @@
+# Scout Bot — standalone sentiment service. Needs `pg` client + built-in fetch.
+FROM node:22-slim
+
+WORKDIR /app/scout
+RUN npm init -y >/dev/null 2>&1 && npm install pg --no-audit --no-fund 2>&1 | tail -2
+
+COPY scout/scout.mjs ./scout.mjs
+
+# Runs as root in its own container. Needs DATABASE_URL, SEARXNG_URL, RESEARCH_API_KEY, etc.
+CMD ["node", "scout.mjs"]

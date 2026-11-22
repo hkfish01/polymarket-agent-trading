@@ -1,0 +1,12 @@
+# ETL archive service — separate image because it needs the `pg` client while the
+# engine itself is deliberately dependency-free.
+FROM node:22-slim
+
+WORKDIR /app/etl
+RUN npm init -y >/dev/null 2>&1 && npm install pg --no-audit --no-fund 2>&1 | tail -2
+
+COPY etl/schema.sql ./schema.sql
+COPY etl/etl.mjs ./etl.mjs
+
+# Runs as root inside its own tiny container; no secrets beyond DATABASE_URL.
+CMD ["node", "etl.mjs"]

@@ -1,0 +1,148 @@
+# MEAT / Polymarket — docker compose
+#
+#   docker compose up -d          # start the engine loop
+#   docker compose logs -f        # tail engine + reaper logs
+#   docker compose down           # stop (state persists in the named volume)
+#
+# Secrets come from ../.env (same file you filled in). It is NOT baked into the image.
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: meat-polymarket:latest
+    container_name: meat-engine
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    # Polymarket venue config. `broker: "polymarket"` routes the engine to the
+    # outcome-market broker instead of Alpaca.
+    command: ["run", "--config", "/app/polymarket.config.json", "--state-dir", "/app/state"]
+    volumes:
+      - meat-state:/app/state
+      - ./polymarket.config.json:/app/polymarket.config.json:ro
+    # The engine runs 24/7 (no market clock). No ports exposed: the operator talks to it
+    # via `docker exec` or the CLI, not a network surface. Uncomment only if you run the
+    # web dashboard and understand the exposure.
+    # ports:
+    #   - "127.0.0.1:8080:8080"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  # The Reaper is a SEPARATE process (brake D12) the engine cannot reach. It re-derives
+  # deaths from broker state and executes them independently. Paper mode executes deaths
+  # in-process, so this service only matters for live; kept here for completeness.
+  reaper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: meat-polymarket:latest
+    container_name: meat-reaper
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    entrypoint: ["node", "packages/automaton-trading/src/reaper-process.js"]
+    command: ["--state-dir", "/app/state"]
+    volumes:
+      - meat-state:/app/state
+      - ./polymarket.config.json:/app/polymarket.config.json:ro
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  # Read-only operator dashboard. Serves a single HTML page + a JSON API that merges
+  # registry/ledger/research/brain state. It mounts the same state volume read-only and
+  # has no order-entry, transfer, or control surface — monitoring only.
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: meat-polymarket:latest
+    container_name: meat-dashboard
+    restart: unless-stopped
+    entrypoint: ["node", "packages/automaton-trading/dashboard.mjs"]
+    environment:
+      - AUTOMATON_STATE_DIR=/app/state
+      - PORT=8088
+    volumes:
+      - meat-state:/app/state:ro
+    ports:
+      - "8088:8088"
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  # Postgres archive — durable history that survives state-volume clears (re-seeding
+  # the population) and gives fast SQL queries for historical charts. The ETL service
+  # upserts engine state here on a timer; nothing in the engine writes to it directly.
+  postgres:
+    image: postgres:16-alpine
+    container_name: meat-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=meat
+      - POSTGRES_USER=meat
+      - POSTGRES_PASSWORD=meat_archive
+    volumes:
+      - meat-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meat -d meat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  # ETL: read engine state (read-only) -> upsert into Postgres. Idempotent.
+  etl:
+    build:
+      context: .
+      dockerfile: Dockerfile.etl
+    image: meat-etl:latest
+    container_name: meat-etl
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://meat:meat_archive@postgres:5432/meat
+      - STATE_DIR=/app/state
+      - SYNC_INTERVAL_MS=60000
+    volumes:
+      - meat-state:/app/state:ro
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  # Scout Bot — polls SearXNG for fresh news on each active market, scores sentiment
+  # with the LLM, and writes signals into Postgres (scout_signals table). prob-trader
+  # reads the latest signal per market to improve its probability estimate.
+  scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.scout
+    image: meat-scout:latest
+    container_name: meat-scout
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://meat:meat_archive@postgres:5432/meat
+      - STATE_DIR=/app/state
+      - SEARXNG_URL=http://192.168.16.202:8080
+      - SCAN_INTERVAL_MS=900000
+    volumes:
+      - meat-state:/app/state:ro
+    env_file:
+      - ./.env
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+volumes:
+  meat-state:
+  meat-postgres:
