@@ -90,6 +90,9 @@ export function createBroker(config, options = {}) {
   }
   const baseEquity = num(config.sim?.accountEquityUsd, 100000);
   const commissionBps = num(config.sim?.commissionBps, 0);
+  // Polymarket has no margin/shorting: a YES token can only be sold if already held.
+  const allowShort = config.instruments?.allowShort === true;
+  const allowMargin = config.instruments?.allowMargin === true;
 
   // -------------------------------------------------------------------------
   // market discovery: map each short symbol -> one real market (YES token)
@@ -436,6 +439,14 @@ export function createBroker(config, options = {}) {
       if (side !== 'buy' && side !== 'sell') fail('SPEC_INVALID', 'polysim order side must be buy or sell', { symbol, side });
       const qty = num(order.qty, null);
       if (!(qty > 0)) fail('SPEC_INVALID', 'polysim order requires qty > 0', { symbol, qty });
+      const heldQty = num(account.positions.get(symbol)?.qty, 0) ?? 0;
+      if (side === 'sell' && !allowShort && qty > heldQty + 1e-9) {
+        fail('BRAKE_DENIED', `polysim: shorting disabled; ${symbol} holds ${heldQty}, tried to sell ${qty}`, {
+          symbol,
+          heldQty,
+          requestedQty: qty,
+        });
+      }
       const type = String(order.type ?? 'market').toLowerCase();
 
       // Fill at the real book midpoint (paper fill on live price).
@@ -446,6 +457,15 @@ export function createBroker(config, options = {}) {
       // Apply a small adverse slippage vs mid so paper fills are not optimistically free.
       const slip = num(config.sim?.slippageBps, 5) / 10000;
       const fillPrice = side === 'buy' ? Math.min(1, round6(book.mid * (1 + slip))) : Math.max(0, round6(book.mid * (1 - slip)));
+      const gross = round2(qty * fillPrice);
+      const fee = round4((gross * commissionBps) / 10000);
+      if (side === 'buy' && !allowMargin && account.cashUsd + 1e-9 < gross + fee) {
+        fail('BRAKE_DENIED', `polysim: margin disabled; need ${(gross + fee).toFixed(2)} but cash is ${account.cashUsd.toFixed(2)}`, {
+          symbol,
+          requiredUsd: round2(gross + fee),
+          cashUsd: account.cashUsd,
+        });
+      }
 
       account.seq += 1;
       const id = `polysim-${String(account.seq).padStart(6, '0')}`;

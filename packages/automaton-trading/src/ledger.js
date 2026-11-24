@@ -147,6 +147,7 @@ export function createLedger({ paths, config, clock } = {}) {
   const currentClock = clock ?? SYSTEM_CLOCK;
   const instruments = config?.instruments ?? {};
   const allowMargin = instruments.allowMargin === true;
+  const allowShort = instruments.allowShort === true;
   const maxMarginPctEquity = Number.isFinite(Number(instruments.maxMarginPctEquity))
     ? Number(instruments.maxMarginPctEquity)
     : 1;
@@ -497,6 +498,18 @@ export function createLedger({ paths, config, clock } = {}) {
     // Whole-share rule for stock shorts (a fractional long is fine; a fractional short is not).
     // Polymarket outcome markets allow fractional shorts (short-YES = long-NO), so exempt them.
     const resultingQty = round4(priorQty + delta);
+    // Polymarket has no margin/shorting: selling more than you hold would create a
+    // negative token balance. Only the death-liquidation path may do that (to close
+    // a legacy short), via skipMarginCheck.
+    if (delta < 0 && resultingQty < -EPSILON && !allowShort && fill.skipMarginCheck !== true) {
+      fail('SHORT_NOT_ALLOWED', `agent "${agentId}" cannot open a ${symbol} short: shorting is disabled`, {
+        agentId,
+        symbol,
+        priorQty,
+        requestedDelta: delta,
+        resultingQty,
+      });
+    }
     const wholeShareRequired = !isOption && assetClass !== 'polymarket_outcome';
     if (wholeShareRequired && resultingQty < 0 && Math.abs(resultingQty - Math.round(resultingQty)) > 1e-6) {
       fail('CONFIG_INVALID', 'short stock positions require whole shares', {
