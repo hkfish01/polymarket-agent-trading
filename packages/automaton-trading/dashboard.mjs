@@ -306,6 +306,25 @@ function buildSummary(agents, treasury = {}) {
   const aliveEquityUsd = round2(alive.reduce((total, agent) => total + num(agent.equityUsd), 0));
   const deadResidualUsd = round2(dead.reduce((total, agent) => total + num(agent.equityUsd), 0));
   const treasuryPoolUsd = round2(num(treasury.poolUsd));
+  // 起始資金：原始 gen0 agent 的 endowment 總和（15 × $500 = $7,500）。
+  // 用 gen0 而非全部 agent，因為繁殖子代的 endowment 不屬於初始投入。
+  const initialCapitalUsd = round2(
+    agents
+      .filter((agent) => num(agent.generation, 0) === 0)
+      .reduce((total, agent) => total + num(agent.endowmentUsd), 0),
+  );
+  const totalCashUsd = round2(sum((agent) => agent.cashUsd));
+  const totalPositionsValueUsd = round2(sum((agent) => agent.positionsValueUsd));
+  const totalUnrealizedPlUsd = round2(sum((agent) => agent.unrealizedPlUsd));
+  const totalLlmCostUsd = Math.round(sum((agent) => agent.tokens.costUsd) * 10000) / 10000;
+  // ledger 的 costsUsd 才是實際入帳的 inference/data/hosting 成本（tokens.costUsd 通常為 0，
+  // 因為上游不回傳 cost 欄位）。用這個口徑才不會把 token 花費算成 0。
+  const totalCostsUsd = round2(sum((agent) => agent.costsUsd));
+  const totalTradingFeesUsd = round2(sum((agent) => agent.tradingFeesUsd));
+  // 從總額看：treasury 餘額 − 起始投入 − 手續費 − token 花費 = 真正留在系統的盈虧。
+  const netPnlFromTreasuryUsd = round2(
+    treasuryPoolUsd - initialCapitalUsd - totalTradingFeesUsd - totalCostsUsd,
+  );
   return {
     totalEquityUsd: round2(sum((agent) => agent.equityUsd)),
     // 资金口径：现金都在 treasury（已死亡 agent 的遗产），已死亡 agent 的残留持仓金额
@@ -314,16 +333,21 @@ function buildSummary(agents, treasury = {}) {
     aliveEquityUsd,
     deadResidualUsd,
     systemFundsUsd: round2(treasuryPoolUsd + aliveEquityUsd),
+    initialCapitalUsd,
+    totalCashUsd,
+    totalPositionsValueUsd,
+    totalUnrealizedPlUsd,
+    netPnlFromTreasuryUsd,
     totalTokens: sum((agent) => agent.tokens.totalTokens),
     totalInputTokens: sum((agent) => agent.tokens.inputTokens),
     totalOutputTokens: sum((agent) => agent.tokens.outputTokens),
-    totalLlmCostUsd: Math.round(sum((agent) => agent.tokens.costUsd) * 10000) / 10000,
+    totalLlmCostUsd,
     // Real money the operator has burned (billed at muskspace list price, cache-miss worst case).
     totalRealRmb: Math.round(sum((agent) => agent.tokens.realRmb) * 1e4) / 1e4,
     totalRealCredits: sum((agent) => agent.tokens.realCredits),
     totalTrades: sum((agent) => agent.trades),
-    totalCostsUsd: round2(sum((agent) => agent.costsUsd)),
-    totalTradingFeesUsd: round2(sum((agent) => agent.tradingFeesUsd)),
+    totalCostsUsd,
+    totalTradingFeesUsd,
     totalRealizedPlUsd: round2(sum((agent) => agent.realizedPlUsd)),
     researchMessageCount: sum((agent) => agent.researchMessageCount),
     brainMessageCount: sum((agent) => agent.brainMessageCount),

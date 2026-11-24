@@ -51,12 +51,16 @@
   .pill.warn { background: #fff4e5; color: var(--amber); }
   .pill.dead { background: #fdecea; color: var(--red); }
   main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  .kpi-row { margin-bottom: 14px; }
+  .kpi-row-label { color: var(--accent); font-size: 12px; font-weight: 600; margin: 0 0 6px 2px; letter-spacing: .04em; }
   .kpis {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
-    margin-bottom: 20px;
+    margin-bottom: 0;
   }
+  .dead-toggle { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); padding:8px 16px 0; cursor:pointer; }
+  .dead-toggle input { cursor:pointer; }
   .kpi {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -246,7 +250,18 @@
   <span class="refresh-note">自動刷新 15s · 更新於 <span id="updated">—</span></span>
 </header>
 <main>
-  <div class="kpis" id="kpis"></div>
+  <div class="kpi-row">
+    <div class="kpi-row-label">① 從總額看</div>
+    <div class="kpis" id="kpis-capital"></div>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-row-label">② 從 agent 看</div>
+    <div class="kpis" id="kpis-agent"></div>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-row-label">③ 從操作看</div>
+    <div class="kpis" id="kpis-ops"></div>
+  </div>
 
   <div class="section">
     <div class="sec-head" data-sec="curve"><h2>歷史權益曲線</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
@@ -264,6 +279,7 @@
     <div class="sec-head" data-sec="gentree"><h2>Agent 世代樹</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
     <div class="sec-body">
       <div class="muted" style="font-size:12px;padding:8px 16px 0">Agent 繁殖家譜：顯示每個 agent 是由誰（父節點）繁殖出來、目前是第幾代（genN）。獲利的 agent 會被引擎複製出「子代」繼承策略基因，虧損過多的會死亡被淘汰——所以樹狀結構能看出哪些策略血脈被延續、哪些已斷絕。</div>
+      <label class="dead-toggle"><input type="checkbox" id="show-dead-gen"> 顯示已死亡 agent（預設隱藏）</label>
       <div class="gen-tree" id="gen-tree"></div>
     </div>
   </div>
@@ -284,6 +300,7 @@
   <div class="section">
     <div class="sec-head" data-sec="overview"><h2>Agent 總覽</h2><button class="sec-toggle" aria-label="收起/展開">−</button></div>
     <div class="sec-body" style="overflow-x:auto">
+      <label class="dead-toggle" style="padding-left:0"><input type="checkbox" id="show-dead-agents"> 顯示已死亡 agent（預設隱藏）</label>
       <table>
         <thead>
           <tr>
@@ -416,15 +433,36 @@ function render(payload) {
   })();
   document.getElementById('updated').textContent = new Date(payload.generatedAt).toLocaleTimeString('zh-TW');
 
-  document.getElementById('kpis').innerHTML = [
-    { label: 'Treasury Pool（資金池）', value: usd(summary.treasuryPoolUsd), cls: 'accent' },
-    { label: '系統真實資金 = 資金池 + 存活權益', value: usd(summary.systemFundsUsd), cls: 'accent' },
-    { label: '存活 Agent 權益', value: usd(summary.aliveEquityUsd) },
-    { label: '總權益（含死亡殘留）', value: usd(summary.totalEquityUsd), cls: 'muted' },
-    { label: '活 / 死 Agent', value: `${summary.aliveCount}<small> / ${summary.deadCount}</small>` },
-    { label: '已實現盈虧', value: usd(summary.totalRealizedPlUsd), cls: cls(summary.totalRealizedPlUsd) },
+  const kpiHtml = (items) => items
+    .map(k => `<div class="kpi"><div class="label">${k.label}</div><div class="value ${k.cls || ''}">${k.value}</div></div>`)
+    .join('');
+
+  // ① 從總額看：起始投入 → treasury 餘額 → 成本扣除 → 當前盈虧
+  document.getElementById('kpis-capital').innerHTML = kpiHtml([
+    { label: '起始金額（原始投入）', value: usd(summary.initialCapitalUsd) },
+    { label: 'Treasury 餘額', value: usd(summary.treasuryPoolUsd), cls: 'accent' },
     { label: '總手續費支出', value: usd(summary.totalTradingFeesUsd), cls: 'warn' },
-    { label: '總交易數', value: String(summary.totalTrades) },
+    { label: '總 token 花費 (USD)', value: usd(summary.totalCostsUsd, 4), cls: 'warn' },
+    {
+      label: '當前盈虧 = 資金池 − 起始 − 手續費 − token',
+      value: usd(summary.netPnlFromTreasuryUsd),
+      cls: cls(summary.netPnlFromTreasuryUsd),
+    },
+  ]);
+
+  // ② 從 agent 看：帳上資產與盈虧（死亡 agent  residue 已清零，所以等於存活權益）
+  document.getElementById('kpis-agent').innerHTML = kpiHtml([
+    { label: '當前 agent 總資產', value: usd(summary.totalEquityUsd), cls: 'accent' },
+    { label: '現金總餘額', value: usd(summary.totalCashUsd) },
+    { label: '持貨總餘額', value: usd(summary.totalPositionsValueUsd) },
+    { label: '當前未實現盈虧', value: usd(summary.totalUnrealizedPlUsd), cls: cls(summary.totalUnrealizedPlUsd) },
+    { label: '當前已實現盈虧', value: usd(summary.totalRealizedPlUsd), cls: cls(summary.totalRealizedPlUsd) },
+  ]);
+
+  // ③ 從操作看：种群、成交、訊息、成本
+  document.getElementById('kpis-ops').innerHTML = kpiHtml([
+    { label: '活 / 死 Agent', value: `${summary.aliveCount}<small> / ${summary.deadCount}</small>` },
+    { label: '總成交數', value: String(summary.totalTrades) },
     { label: '訊息總數（研究+大腦）', value: `${summary.researchMessageCount}<small> / ${summary.brainMessageCount}</small>` },
     { label: 'Token 總消耗', value: summary.totalTokens.toLocaleString() },
     { label: '真實花費 RMB', value: rmb(summary.totalRealRmb), cls: 'warn' },
@@ -435,9 +473,12 @@ function render(payload) {
         : '—',
       cls: remainPct != null && remainPct > 80 ? 'dead' : remainPct != null && remainPct > 50 ? 'warn' : '',
     },
-  ].map(k => `<div class="kpi"><div class="label">${k.label}</div><div class="value ${k.cls || ''}">${k.value}</div></div>`).join('');
+  ]);
 
-  document.getElementById('agent-rows').innerHTML = agents.map(a => {
+  // 死亡 agent 預設隱藏；勾選 checkbox 才顯示（定時重繪時狀態由 DOM 保持）
+  const showDeadAgents = document.getElementById('show-dead-agents')?.checked ?? false;
+  const visibleAgents = showDeadAgents ? agents : agents.filter((a) => a.status !== 'dead');
+  document.getElementById('agent-rows').innerHTML = visibleAgents.map(a => {
     const nearDeath = isNearDeath(a);
     const rowCls = [
       a.status === 'dead' ? 'dead-agent' : '',
@@ -484,7 +525,7 @@ function render(payload) {
     </tr>`;
   }).join('');
 
-  document.getElementById('agent-messages').innerHTML = agents.map(a => {
+  document.getElementById('agent-messages').innerHTML = visibleAgents.map(a => {
     const researchRows = a.latestResearch ? `
       <li><span class="msg-time">${new Date(a.latestResearch.at).toLocaleString('zh-TW')}</span><br>
         <span class="verdict">${a.latestResearch.verdict}</span> · 情緒 ${a.latestResearch.sentiment.toFixed(2)} · 信心 ${(a.latestResearch.confidence*100).toFixed(0)}% · 新聞 ${a.latestResearch.newsCount} 條<br>
@@ -694,6 +735,7 @@ function renderEquityCurve(points) {
 /** Generation tree — indented lineage of agents built from parent/child relations. */
 function renderGenerationTree(tree) {
   const el = document.getElementById('gen-tree');
+  const showDead = document.getElementById('show-dead-gen')?.checked ?? false;
   const byId = new Map(tree.nodes.map(n => [n.id, n]));
   const statusPill = (n) => n.status === 'alive'
     ? pill('存活', 'ok')
@@ -701,6 +743,7 @@ function renderGenerationTree(tree) {
   const drawNode = (id, depth) => {
     const n = byId.get(id);
     if (!n) return '';
+    if (!showDead && n.status === 'dead') return '';
     const children = (n.children ?? []).map(c => drawNode(c, depth + 1)).join('');
     const childWrap = children ? `<div class="gen-children">${children}</div>` : '';
     return `<div class="gen-node ${depth === 0 ? 'gen-root' : ''}">
@@ -712,8 +755,17 @@ function renderGenerationTree(tree) {
       ${childWrap}
     </div>`;
   };
-  const roots = tree.roots ?? [];
-  if (!roots.length) { el.innerHTML = '<span class="muted">暫無 agent</span>'; return; }
+  let roots = tree.roots ?? [];
+  if (!showDead) {
+    // 父代已死亡時，把存活子代提升為 root，避免整條血脈被一起隱藏。
+    roots = [...byId.values()]
+      .filter((n) => n.status !== 'dead' && (!n.parentId || byId.get(n.parentId)?.status === 'dead'))
+      .map((n) => n.id);
+  }
+  if (!roots.length) {
+    el.innerHTML = '<span class="muted">暫無存活 agent（勾選上方可顯示已死亡）</span>';
+    return;
+  }
   el.innerHTML = roots.map(r => drawNode(r, 0)).join('');
 }
 
@@ -836,6 +888,13 @@ document.getElementById('agent-modal').addEventListener('click', (e) => {
   if (e.target.id === 'agent-modal') closeModal(); // click backdrop only
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+// 死亡 agent 顯示開關：立即用最後一份 payload 重繪，不必等下次定時刷新。
+['show-dead-agents', 'show-dead-gen'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('change', () => {
+    if (window.__lastPayload) render(window.__lastPayload);
+  });
+});
 
 updateSortArrows(); // initialize header sort indicators
 
