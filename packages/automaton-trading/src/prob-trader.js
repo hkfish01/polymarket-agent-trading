@@ -218,10 +218,17 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
         continue;
       }
 
-      // 4) Determine side: if our_prob > market_price → buy YES (undervalued).
-      //    if our_prob < market_price → sell YES (overvalued). In polysim we allow
-      //    short-YES even without a position — this is equivalent to buying NO.
-      const side = edge > 0 ? 'buy' : 'sell';
+      // 4) Polymarket has no shorting: bullish → buy YES, bearish → buy NO.
+      //    Both are cash-funded spot purchases of one side of the same binary market.
+      //    sell YES without holding it would be a naked short and is no longer allowed.
+      const bearish = edge < 0;
+      const side = 'buy';
+      const tradeSymbol = bearish ? `${market.symbol}.NO` : market.symbol;
+      const tradedPrice = bearish ? 1 - marketPrice : marketPrice;
+      if (bearish && !marketMap.some((entry) => entry.symbol === tradeSymbol)) {
+        result.rejected.push({ reason: 'NO_MARKET_MISSING', detail: `${tradeSymbol}: no NO token bound in broker` });
+        continue;
+      }
 
       // 5) Size with Kelly criterion.
       const equityUsd = num(agent.equityUsd, num(book?.cashUsd, 0));
@@ -240,9 +247,7 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
       }
 
       // 6) Convert notional to qty (shares = notional / price).
-      const fillPrice = side === 'buy'
-        ? Math.min(1, marketPrice * (1 + slippageBps / 10000))
-        : Math.max(0, marketPrice * (1 - slippageBps / 10000));
+      const fillPrice = Math.min(1, tradedPrice * (1 + slippageBps / 10000));
       const qty = Math.floor((notionalUsd / fillPrice) * 10000) / 10000; // 4dp shares
       if (qty <= 0) {
         result.rejected.push({ reason: 'QTY_ZERO', detail: `${market.symbol}: qty rounds to 0` });
@@ -259,7 +264,7 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
         positions: book?.positions ?? {},
         mandate,
         order: {
-          symbol: market.symbol,
+          symbol: tradeSymbol,
           side,
           price: fillPrice,
           qty,
@@ -276,7 +281,7 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
       let order;
       try {
         order = await broker.submitOrder({
-          symbol: market.symbol,
+          symbol: tradeSymbol,
           side,
           qty,
           type: 'market',
@@ -291,7 +296,7 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
       const fillPrice2 = num(order.avgFillPriceUsd, fillPrice);
       if (filledQty > 0) {
         await ledger.applyFill(agentId, {
-          symbol: market.symbol,
+          symbol: tradeSymbol,
           assetClass: 'polymarket_outcome',
           side,
           qty: filledQty,
@@ -305,7 +310,8 @@ export function createProbTrader({ broker, ledger, brakes, config, generate, clo
       ordersThisCycle += 1;
       result.actions.push({
         type: 'order',
-        symbol: market.symbol,
+        symbol: tradeSymbol,
+        outcome: bearish ? 'NO' : 'YES',
         side,
         qty: filledQty,
         priceUsd: Number(fillPrice2.toFixed(6)),

@@ -741,7 +741,10 @@ export function createBrakes({ config, paths, clock } = {}) {
 
     // ---- D4: whitelist, price/notional, spread, slippage -----------------------
     const whitelist = new Set((Array.isArray(config.symbols) ? config.symbols : []).map((item) => String(item).toUpperCase()));
-    const whitelistSymbol = isOptionOrder ? underlying : symbol;
+    // A bearish Polymarket order buys the NO leg of an allowed symbol (e.g. PP2.NO).
+    // Authorise it against the base symbol without adding a separate whitelist entry.
+    const baseSymbol = String(symbol ?? '').toUpperCase().replace(/\.NO$/, '');
+    const whitelistSymbol = isOptionOrder ? underlying : baseSymbol;
     if (whitelistSymbol === '' || !whitelist.has(whitelistSymbol)) {
       return deny('D4', `symbol "${whitelistSymbol || '(empty)'}" is not in the tradable whitelist`);
     }

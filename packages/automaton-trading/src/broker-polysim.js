@@ -65,6 +65,10 @@ function round6(value) {
   return Math.round((Number(value) || 0) * 1e6) / 1e6;
 }
 
+function round4(value) {
+  return Math.round((Number(value) || 0) * 1e4) / 1e4;
+}
+
 /**
  * Construct a polysim broker.
  * @param {object} config full engine config (uses config.symbols, config.polysim, config.sim)
@@ -139,10 +143,18 @@ export function createBroker(config, options = {}) {
         }
         if (!Array.isArray(tokenIds) || tokenIds.length === 0) continue;
         if (!Array.isArray(outcomes) || outcomes.length === 0) continue;
-        // For binary markets the YES token is index 0. For multi-outcome we take each
-        // token as its own tradable line; the short code binds to the first (YES).
+        let outcomePrices = market.outcomePrices;
+        if (typeof outcomePrices === 'string') {
+          try { outcomePrices = JSON.parse(outcomePrices); } catch { outcomePrices = []; }
+        }
+        // For binary markets the YES token is the YES outcome; NO is the complementary
+        // token in the same market. Bearish signals buy NO instead of shorting YES.
         const yesIndex = findYesIndex(outcomes);
+        const noIndex = outcomes.findIndex((label) => String(label).trim().toUpperCase() === 'NO');
         const tokenId = tokenIds[yesIndex] ?? tokenIds[0];
+        const noTokenId = noIndex >= 0 && tokenIds[noIndex] && tokenIds[noIndex] !== tokenId
+          ? tokenIds[noIndex]
+          : tokenIds.find((id) => id !== tokenId) ?? null;
         const label = String(outcomes[yesIndex] ?? outcomes[0] ?? 'YES');
         const endDate = market.endDateIso ?? market.endDate ?? event.endDate ?? null;
         const hoursToClose = hoursUntil(endDate, nowMs);
@@ -153,6 +165,10 @@ export function createBroker(config, options = {}) {
         if (liquidity < 500) continue;
         const entry = {
           tokenId,
+          noTokenId,
+          yesIndex,
+          noIndex: noIndex >= 0 ? noIndex : 1 - yesIndex,
+          outcomePrices: Array.isArray(outcomePrices) ? outcomePrices.map((p) => num(p, 0)) : [],
           conditionId: String(market.conditionId ?? event.id ?? '').trim(),
           question: String(market.question ?? event.title ?? '').trim(),
           slug: String(market.slug ?? event.slug ?? '').trim(),
@@ -182,10 +198,21 @@ export function createBroker(config, options = {}) {
       const pick = pool.find((candidate) => !usedTokenIds.has(candidate.tokenId));
       if (!pick) continue;
       usedTokenIds.add(pick.tokenId);
+      if (pick.noTokenId) usedTokenIds.add(pick.noTokenId);
       const seq = (counters.get(category) ?? 0) + 1;
       counters.set(category, seq);
-      marketMap.set(symbol, { ...pick, shortCode: symbol });
-      assignments.push({ symbol, category, question: pick.question, tokenId: pick.tokenId, hoursToClose: pick.hoursToClose });
+      marketMap.set(symbol, { ...pick, shortCode: symbol, side: 'YES', tokenId: pick.tokenId });
+      assignments.push({ symbol, category, question: pick.question, tokenId: pick.tokenId, side: 'YES', hoursToClose: pick.hoursToClose });
+      if (pick.noTokenId) {
+        const noSymbol = `${symbol}.NO`;
+        marketMap.set(noSymbol, {
+          ...pick, shortCode: symbol, side: 'NO', tokenId: pick.noTokenId, label: 'NO',
+        });
+        assignments.push({
+          symbol: noSymbol, category, question: pick.question,
+          tokenId: pick.noTokenId, side: 'NO', hoursToClose: pick.hoursToClose,
+        });
+      }
     }
     if (marketMap.size === 0) {
       fail('BROKER_ERROR', 'polysim discovery matched no tradable markets to the configured symbols', {
@@ -510,6 +537,7 @@ export function createBroker(config, options = {}) {
         slug: market.slug,
         tokenId: market.tokenId,
         label: market.label,
+        side: market.side ?? 'YES',
         hoursToClose: market.hoursToClose,
       }));
     },
@@ -540,6 +568,19 @@ export function createBroker(config, options = {}) {
         const arr = JSON.parse(gammaText);
         const gm = Array.isArray(arr) ? arr[0] : null;
         if (gm) {
+          // Gamma's top-of-book fields describe the YES token. For a NO symbol use
+          // the market's outcomePrices (NO = 1 − YES for a binary market).
+          if (String(market.side ?? 'YES').toUpperCase() === 'NO') {
+            let prices = gm.outcomePrices;
+            if (typeof prices === 'string') {
+              try { prices = JSON.parse(prices); } catch { prices = []; }
+            }
+            const idx = Number.isInteger(market.noIndex) ? market.noIndex : 1;
+            const noPrice = num(prices?.[idx], null);
+            if (noPrice !== null && noPrice > 0 && noPrice < 1) {
+              return { bestBid: null, bestAsk: null, mid: noPrice };
+            }
+          }
           bestBid = num(gm.bestBid ?? gm.bestBid?.toString(), null);
           bestAsk = num(gm.bestAsk ?? gm.bestAsk?.toString(), null);
           const lastTrade = num(gm.lastTradePrice ?? gm.lastTradePrice?.toString(), null);
