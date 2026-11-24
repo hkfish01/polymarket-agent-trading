@@ -79,7 +79,17 @@
   "sim": {
     "accountEquityUsd": 100000,
     "slippageBps": 8,
-    "commissionBps": 0
+    "commissionBps": 10
+  },
+  "instruments": {
+    "enabled": true,
+    "allowMargin": false,
+    "maxMarginPctEquity": 0,
+    "allowShort": false,
+    "maxShortNotionalUsd": 0,
+    "allowOptions": false,
+    "allowCoveredCalls": false,
+    "allowSpreads": false
   },
   "polysim": {
     "discoveryLimit": 200

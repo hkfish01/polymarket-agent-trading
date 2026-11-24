@@ -423,6 +423,7 @@ function render(payload) {
     { label: '總權益（含死亡殘留）', value: usd(summary.totalEquityUsd), cls: 'muted' },
     { label: '活 / 死 Agent', value: `${summary.aliveCount}<small> / ${summary.deadCount}</small>` },
     { label: '已實現盈虧', value: usd(summary.totalRealizedPlUsd), cls: cls(summary.totalRealizedPlUsd) },
+    { label: '總手續費支出', value: usd(summary.totalTradingFeesUsd), cls: 'warn' },
     { label: '總交易數', value: String(summary.totalTrades) },
     { label: '訊息總數（研究+大腦）', value: `${summary.researchMessageCount}<small> / ${summary.brainMessageCount}</small>` },
     { label: 'Token 總消耗', value: summary.totalTokens.toLocaleString() },

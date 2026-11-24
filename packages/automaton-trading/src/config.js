@@ -151,9 +151,9 @@ export function defaultConfig() {
     // defined-risk vertical spreads and covered calls. Risk caps are enforced again by brakes.
     instruments: {
       enabled: true,
-      allowMargin: true,
-      maxMarginPctEquity: 1,
-      allowShort: true,
+      allowMargin: false,
+      maxMarginPctEquity: 0,
+      allowShort: false,
       maxShortPctEquity: 1,
       maxShortNotionalUsd: 25,
       shortableOnly: true,

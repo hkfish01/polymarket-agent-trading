@@ -150,6 +150,9 @@ export function createLedger({ paths, config, clock } = {}) {
   const maxMarginPctEquity = Number.isFinite(Number(instruments.maxMarginPctEquity))
     ? Number(instruments.maxMarginPctEquity)
     : 1;
+  // Trading fee is charged on every fill (both buy and sell). Same knob as broker-polysim's
+  // commissionBps, so the broker's internal account and the ledger stay in sync.
+  const commissionBps = Number(config?.sim?.commissionBps) > 0 ? Number(config.sim.commissionBps) : 0;
 
   /** @type {{ version: number, anchored: boolean, anchoredAt: string|null, agents: Record<string, object> }} */
   let state = emptyState();
@@ -170,6 +173,7 @@ export function createLedger({ paths, config, clock } = {}) {
       grossSpendUsd: 0,
       grossRevenueUsd: 0,
       creditsUsd: 0,
+      tradingFeesUsd: 0,
       trades: 0,
       firstProfitAt: null,
       declaredEndowmentUsd: round2(Math.max(0, Number(endowmentUsd) || 0)),
@@ -284,6 +288,7 @@ export function createLedger({ paths, config, clock } = {}) {
     record.grossSpendUsd = round8(Number(record.grossSpendUsd) || 0);
     record.grossRevenueUsd = round8(Number(record.grossRevenueUsd) || 0);
     record.creditsUsd = round8(Number(record.creditsUsd) || 0);
+    record.tradingFeesUsd = round8(Number(record.tradingFeesUsd) || 0);
     record.trades = Number(record.trades) || 0;
     record.fills = Array.isArray(record.fills) ? record.fills : [];
     record.events = Array.isArray(record.events) ? record.events : [];
@@ -487,6 +492,7 @@ export function createLedger({ paths, config, clock } = {}) {
       : 1;
     const optionMetadata = isOption ? buildOptionMetadata(fill, symbol, prior) : null;
     const notionalUsd = round2(quantity * price * multiplier);
+    const feeUsd = round4((notionalUsd * commissionBps) / 10000);
 
     // Whole-share rule for stock shorts (a fractional long is fine; a fractional short is not).
     // Polymarket outcome markets allow fractional shorts (short-YES = long-NO), so exempt them.
@@ -541,7 +547,10 @@ export function createLedger({ paths, config, clock } = {}) {
     }
 
     // ---- cash + margin ------------------------------------------------------
-    let cashUsd = round8(record.cashUsd + (direction === 'buy' ? -notionalUsd : notionalUsd));
+    // Fee is paid on both sides: buy pays notional + fee, sell receives notional - fee.
+    let cashUsd = round8(
+      record.cashUsd + (direction === 'buy' ? -(notionalUsd + feeUsd) : notionalUsd - feeUsd),
+    );
 
     // Build the tentative position map so margin can be measured on post-fill equity.
     const tentativePositions = { ...record.positions };
@@ -594,6 +603,7 @@ export function createLedger({ paths, config, clock } = {}) {
     record.positions = tentativePositions;
     record.markPrices = { ...record.markPrices, [symbol]: price };
     record.realizedPlUsd = round8(record.realizedPlUsd + realizedPlUsd);
+    record.tradingFeesUsd = round8((Number(record.tradingFeesUsd) || 0) + feeUsd);
     record.trades += 1;
     if (direction === 'buy') record.grossSpendUsd = round8(record.grossSpendUsd + notionalUsd);
     else record.grossRevenueUsd = round8(record.grossRevenueUsd + notionalUsd);
@@ -606,6 +616,7 @@ export function createLedger({ paths, config, clock } = {}) {
       priceUsd: price,
       multiplier,
       notionalUsd,
+      feeUsd,
       realizedPlUsd,
       option,
       groupId,
@@ -622,6 +633,7 @@ export function createLedger({ paths, config, clock } = {}) {
       amountUsd: direction === 'buy' ? -notionalUsd : notionalUsd,
       symbol,
       qty: quantity,
+      feeUsd,
       realizedPlUsd,
       assetClass,
     });
@@ -632,6 +644,7 @@ export function createLedger({ paths, config, clock } = {}) {
     pruneEvents(record);
     return {
       realizedPlUsd,
+      feeUsd,
       position: record.positions[symbol] ? viewPosition(record, record.positions[symbol]) : null,
       cashUsd: record.cashUsd,
       marginDebtUsd,

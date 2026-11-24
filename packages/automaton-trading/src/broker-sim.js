@@ -278,8 +278,8 @@ export function createBroker(config, options = {}, simOptions = {}) {
     num(config.data?.lookbackBars, 120) + 60,
   );
   // Multi-instrument capability of the synthetic account (paper-parity defaults).
-  const allowMargin = config.instruments?.allowMargin === undefined ? true : config.instruments.allowMargin === true;
-  const allowShort = config.instruments?.allowShort === undefined ? true : config.instruments.allowShort === true;
+  const allowMargin = config.instruments?.allowMargin === undefined ? false : config.instruments.allowMargin === true;
+  const allowShort = config.instruments?.allowShort === undefined ? false : config.instruments.allowShort === true;
   const maxMarginPctEquity = num(config.instruments?.maxMarginPctEquity, 1);
   const optionExpiryDays = Array.isArray(options.optionExpiryDays) && options.optionExpiryDays.length > 0
     ? options.optionExpiryDays.map(Number).filter((days) => Number.isFinite(days) && days > 0)

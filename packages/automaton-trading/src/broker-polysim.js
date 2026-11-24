@@ -255,7 +255,7 @@ export function createBroker(config, options = {}) {
   function fillVirtual(order, fillPrice) {
     const signedQty = order.side === 'sell' ? -order.qty : order.qty;
     const gross = round2(Math.abs(signedQty) * fillPrice);
-    const commission = round2((gross * commissionBps) / 10000);
+    const commission = round4((gross * commissionBps) / 10000);
     const cashDelta = order.side === 'buy' ? -(gross + commission) : (gross - commission);
     account.cashUsd = round2(account.cashUsd + cashDelta);
     applyPositionDelta({
