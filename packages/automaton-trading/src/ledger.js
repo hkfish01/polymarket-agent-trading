@@ -560,7 +560,10 @@ export function createLedger({ paths, config, clock } = {}) {
       };
     }
     let marginDebtUsd = round2(Math.max(0, -cashUsd));
-    if (marginDebtUsd > EPSILON) {
+    // skipMarginCheck is ONLY for the death-liquidation path: closing a short requires
+    // buying it back, which debits cash after the estate's cash was swept to treasury.
+    // Normal order entry NEVER sets this flag, so live margin risk stays fully enforced.
+    if (marginDebtUsd > EPSILON && fill.skipMarginCheck !== true) {
       let positionsValue = 0;
       for (const [sym, position] of Object.entries(tentativePositions)) {
         const mark = sym === symbol ? price : (markFor(record, sym, {}, null) ?? (Number(position.avgPriceUsd) || 0));

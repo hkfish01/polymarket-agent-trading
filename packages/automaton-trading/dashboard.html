@@ -65,6 +65,7 @@
   }
   .kpi .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
   .kpi .value { font-size: 22px; font-weight: 600; font-family: var(--mono); }
+  .kpi .value.accent { color: var(--accent); }
   .kpi .value small { font-size: 13px; color: var(--muted); font-weight: 400; }
   .pos { color: var(--green); }
   .neg { color: var(--red); }
@@ -416,7 +417,10 @@ function render(payload) {
   document.getElementById('updated').textContent = new Date(payload.generatedAt).toLocaleTimeString('zh-TW');
 
   document.getElementById('kpis').innerHTML = [
-    { label: '總權益', value: usd(summary.totalEquityUsd) },
+    { label: 'Treasury Pool（資金池）', value: usd(summary.treasuryPoolUsd), cls: 'accent' },
+    { label: '系統真實資金 = 資金池 + 存活權益', value: usd(summary.systemFundsUsd), cls: 'accent' },
+    { label: '存活 Agent 權益', value: usd(summary.aliveEquityUsd) },
+    { label: '總權益（含死亡殘留）', value: usd(summary.totalEquityUsd), cls: 'muted' },
     { label: '活 / 死 Agent', value: `${summary.aliveCount}<small> / ${summary.deadCount}</small>` },
     { label: '已實現盈虧', value: usd(summary.totalRealizedPlUsd), cls: cls(summary.totalRealizedPlUsd) },
     { label: '總交易數', value: String(summary.totalTrades) },

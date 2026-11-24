@@ -1123,7 +1123,7 @@ export async function createAutomaton(options = {}) {
       if (config.mode === 'sim') {
         try {
           state.inProcessReaper = state.inProcessReaper
-            ?? createReaper({ broker, registry, ledger, journal, config, paths, clock });
+            ?? createReaper({ broker, registry, ledger, journal, config, paths, clock, bookOnFailure: true });
           const swept = await state.inProcessReaper.sweep({ prices });
           trace.deathsExecuted = (swept.killed ?? []).map((entry) => ({
             agentId: entry.agentId,

@@ -129,6 +129,9 @@ export async function liquidatePositions({
         groupId: position?.groupId ?? position?.option?.groupId ?? null,
         at,
         orderId: order?.id ?? null,
+        // Liquidation closes exposure; it must never be blocked by a margin check.
+        // Buying back a swept estate's short would otherwise leave a phantom position.
+        skipMarginCheck: true,
       });
       liquidated.push({
         symbol,
@@ -159,6 +162,7 @@ export async function liquidatePositions({
             groupId: position?.groupId ?? position?.option?.groupId ?? null,
             at,
             orderId: null,
+            skipMarginCheck: true,
           });
           liquidated.push({
             symbol,
@@ -189,7 +193,7 @@ export async function liquidatePositions({
  * @param {{ broker: object, registry: object, ledger: object, journal: object,
  *   config: object, paths?: object, clock?: object }} options
  */
-export function createReaper({ broker, registry, ledger, journal, config, paths, clock } = {}) {
+export function createReaper({ broker, registry, ledger, journal, config, paths, clock, bookOnFailure = false } = {}) {
   if (!broker || !registry || !ledger || !journal || !config) {
     throw new AutomatonError(
       'CONFIG_INVALID',
@@ -265,6 +269,11 @@ export function createReaper({ broker, registry, ledger, journal, config, paths,
       marketOpen,
       clientOrderIdPrefix: `atm:${agentId}:reaper`,
       errors,
+      // In sim mode (synthetic in-process broker) a rejected close order must still
+      // clear the virtual book, otherwise a dead agent keeps a phantom position whose
+      // negative mark-to-market drags the population's headline equity below zero.
+      // Paper/live keep the safe default (false): retry the real broker next sweep.
+      bookOnFailure,
     });
   }
 

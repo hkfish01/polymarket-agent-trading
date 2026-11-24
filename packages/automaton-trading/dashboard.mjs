@@ -295,14 +295,23 @@ function buildAgents(registry, ledger, marketMap = {}) {
 }
 
 /** Build a summary of the whole population + the latest cycle trace. */
-function buildSummary(agents) {
+function buildSummary(agents, treasury = {}) {
   const alive = agents.filter((agent) => agent.status === 'alive');
   const dead = agents.filter((agent) => agent.status === 'dead');
   const sum = (pick) => agents.reduce((total, agent) => total + num(pick(agent)), 0);
   const traces = readJsonlSafe(path.join(STATE_DIR, 'traces.jsonl'));
   const lastTrace = traces.length > 0 ? traces[traces.length - 1] : null;
+  const aliveEquityUsd = round2(alive.reduce((total, agent) => total + num(agent.equityUsd), 0));
+  const deadResidualUsd = round2(dead.reduce((total, agent) => total + num(agent.equityUsd), 0));
+  const treasuryPoolUsd = round2(num(treasury.poolUsd));
   return {
     totalEquityUsd: round2(sum((agent) => agent.equityUsd)),
+    // 资金口径：现金都在 treasury（已死亡 agent 的遗产），已死亡 agent 的残留持仓金额
+    // 单独列出，避免「总权益为负 = 亏光」的误读。系统真实资金 = 资金池 + 存活权益。
+    treasuryPoolUsd,
+    aliveEquityUsd,
+    deadResidualUsd,
+    systemFundsUsd: round2(treasuryPoolUsd + aliveEquityUsd),
     totalTokens: sum((agent) => agent.tokens.totalTokens),
     totalInputTokens: sum((agent) => agent.tokens.inputTokens),
     totalOutputTokens: sum((agent) => agent.tokens.outputTokens),
@@ -439,7 +448,7 @@ function buildPayload() {
       // billed at the cache-miss rate (conservative upper bound on real spend).
       inputBillingAssumption: 'cache-miss (worst case)',
     },
-    summary: buildSummary(agents),
+    summary: buildSummary(agents, treasury),
     agents,
     // New analytical views for the operator dashboard.
     equityCurve: buildEquityCurve(),
