@@ -472,12 +472,12 @@ export function createReaper({ broker, registry, ledger, journal, config, paths,
         if (equity.equityUsd <= floorUsd) cause = 'insufficient_funds';
         else if (equity.equityUsd <= drawdownThreshold) cause = 'drawdown_limit';
         else if (systemDead) cause = 'insufficient_funds';
-        if (!cause && dayStats && maxDailyLossPct > 0) {
-          const dayEntry = dayStats.agents?.[agentId];
-          const startEquityUsd = Number(dayEntry?.startEquityUsd);
-          const pnlUsd = Number(dayEntry?.pnlUsd);
-          if (Number.isFinite(startEquityUsd) && startEquityUsd > 0 && Number.isFinite(pnlUsd)) {
-            if (-pnlUsd / startEquityUsd >= maxDailyLossPct) cause = 'daily_loss_limit';
+        // daily_loss_limit 基准改为本金 (endowmentUsd)，而非昨天高点 (startEquityUsd)：
+        // 浮盈回吐不再误判死亡，只有相对本金真正亏损才触发。
+        if (!cause && maxDailyLossPct > 0) {
+          const dayPnlFromEndowmentUsd = equity.equityUsd - endowmentUsd;
+          if (Number.isFinite(endowmentUsd) && endowmentUsd > 0) {
+            if (-dayPnlFromEndowmentUsd / endowmentUsd >= maxDailyLossPct) cause = 'daily_loss_limit';
           }
         }
         if (!cause && !accountActive) cause = 'account_not_active';

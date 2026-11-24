@@ -413,13 +413,16 @@ export function createTreasurer({ broker, ledger, registry, journal, config, pat
         const ordersToday = Number(dayStat.ordersCount) || 0;
 
         const drawdownThreshold = round2(endowment * (1 - Number(config.maxDrawdownPct ?? 0)));
+        // daily_loss_limit 基准改为本金 (endowment)，而非昨天高点 (startEquityUsd)：
+        // 浮盈回吐不再误判死亡，只有相对本金真正亏损才触发。
+        const dayPnlFromEndowmentUsd = round2(eq.equityUsd - endowment);
         let cause = null;
         if (eq.equityUsd <= floor) cause = 'insufficient_funds';
         else if (eq.equityUsd <= drawdownThreshold) cause = 'drawdown_limit';
         else if (
-          Number.isFinite(startEquityUsd) &&
-          startEquityUsd > 0 &&
-          dayPnlUsd <= -Number(config.risk?.maxDailyLossPct ?? 0) * startEquityUsd
+          Number.isFinite(endowment) &&
+          endowment > 0 &&
+          dayPnlFromEndowmentUsd <= -Number(config.risk?.maxDailyLossPct ?? 0) * endowment
         ) {
           cause = 'daily_loss_limit';
         }

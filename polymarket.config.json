@@ -3,18 +3,25 @@
   "broker": "polysim",
   "cycleIntervalSec": 300,
   "reaperIntervalSec": 30,
-  "population": { "initial": 15, "cap": 30 },
+  "population": {
+    "initial": 15,
+    "cap": 30
+  },
   "endowmentUsd": 500,
   "deathFloorUsd": 1,
   "deathFloorPct": 0.05,
-  "maxDrawdownPct": 0.2,
+  "maxDrawdownPct": 0.3,
   "burn": {
     "inferencePerCycleUsd": 0.0002,
     "dataPerCycleUsd": 0.00005,
     "hostingPerHourUsd": 0.00001,
     "committedMonthlyUsd": 0
   },
-  "cycleBudget": { "STABLE": 4, "TIGHT": 1.5, "CRITICAL": 0.5 },
+  "cycleBudget": {
+    "STABLE": 4,
+    "TIGHT": 1.5,
+    "CRITICAL": 0.5
+  },
   "replication": {
     "surplus7dUsd": 50,
     "minRunwayHours": 72,
@@ -37,7 +44,10 @@
     "allowMargin": false,
     "allowOptions": false,
     "extendedHours": true,
-    "sessionWindow": ["00:00", "23:59"],
+    "sessionWindow": [
+      "00:00",
+      "23:59"
+    ],
     "maxOrdersPerCycle": 4,
     "maxBuildSpendPct": 0.4
   },
@@ -50,11 +60,20 @@
     "maxOutputTokens": 700
   },
   "symbols": [
-    "PC1", "PC2", "PC3", "PC4",
-    "PP1", "PP2", "PP3",
-    "PE1", "PE2", "PE3",
-    "PS1", "PS2",
-    "PW1", "PW2",
+    "PC1",
+    "PC2",
+    "PC3",
+    "PC4",
+    "PP1",
+    "PP2",
+    "PP3",
+    "PE1",
+    "PE2",
+    "PE3",
+    "PS1",
+    "PS2",
+    "PW1",
+    "PW2",
     "PX1"
   ],
   "sim": {
@@ -70,5 +89,6 @@
     "traceLimit": 2000,
     "tradingHoursOnly": false,
     "offHoursIntervalSec": 300
-  }
+  },
+  "timeZone": "Asia/Shanghai"
 }
