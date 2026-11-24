@@ -32,6 +32,10 @@ import { createEventFeed } from './event-feed.js';
 
 const REQUEST_TIMEOUT_MS = 12000;
 const CLOB_BASE = 'https://clob.polymarket.com';
+const GAMMA_BASE = 'https://gamma-api.polymarket.com';
+// When the CLOB fallback's top-of-book spread exceeds this fraction of the bid, treat
+// the market as thin and refuse to trust the venue midpoint. See fetchBook().
+const THIN_MARKET_SPREAD_PCT = 0.15;
 
 /** Map a short symbol prefix to a Polymarket tag/category we search for. */
 function categoryForSymbol(symbol) {
@@ -78,6 +82,7 @@ export function createBroker(config, options = {}) {
   const sleepImpl = options.sleepImpl ?? sleep;
   const eventFeed = options.eventFeed ?? createEventFeed({ fetchImpl });
   const clobBase = String(config.polysim?.clobBaseUrl ?? CLOB_BASE).replace(/\/+$/, '');
+  const gammaBase = String(config.polysim?.gammaBaseUrl ?? GAMMA_BASE).replace(/\/+$/, '');
 
   const configuredSymbols = Array.isArray(config.symbols) ? [...config.symbols] : [];
   if (configuredSymbols.length === 0) {
@@ -100,7 +105,7 @@ export function createBroker(config, options = {}) {
    * category) and nests its tradable markets; the bare /markets endpoint has no tags.
    */
   async function discoverMarkets() {
-    const host = String(config.polysim?.gammaBaseUrl ?? 'https://gamma-api.polymarket.com').replace(/\/+$/, '');
+    const host = gammaBase;
     const limit = Math.max(20, Math.min(200, num(config.polysim?.discoveryLimit, 120)));
     const nowMs = Date.now();
     const url = `${host}/events?active=true&closed=false&limit=${limit}&order=volume24hr&ascending=false`;
@@ -380,7 +385,7 @@ export function createBroker(config, options = {}) {
       const code = String(symbol).toUpperCase();
       const market = marketMap.get(code);
       if (!market) fail('DATA_MISSING', `polysim: unknown symbol ${code}`);
-      const book = await fetchBook(market.tokenId);
+      const book = await fetchBook(market);
       return {
         symbol: code,
         priceUsd: book.mid,
@@ -434,7 +439,7 @@ export function createBroker(config, options = {}) {
       const type = String(order.type ?? 'market').toLowerCase();
 
       // Fill at the real book midpoint (paper fill on live price).
-      const book = await fetchBook(market.tokenId);
+      const book = await fetchBook(market);
       if (book.mid === null || book.mid === undefined) {
         fail('BROKER_ERROR', `polysim: no live midpoint for ${symbol}`, { symbol, tokenId: market.tokenId });
       }
@@ -500,11 +505,42 @@ export function createBroker(config, options = {}) {
    * (bestBid+bestAsk)/2 on a book like $0.01 x $0.99 yields a meaningless $0.50.
    * We still return bestBid/bestAsk so the caller can gauge spread quality.
    */
-  async function fetchBook(tokenId) {
-    const url = `${clobBase}/book?token_id=${encodeURIComponent(tokenId)}`;
+  async function fetchBook(market) {
+    const tokenId = market.tokenId;
     let bestBid = null;
     let bestAsk = null;
     let mid = null;
+
+    // ---- PRIMARY: gamma API authoritative quote ---------------------------
+    try {
+      const gammaUrl = `${gammaBase}/markets?slug=${encodeURIComponent(market.slug ?? '')}`;
+      const gammaRes = await fetchImpl(gammaUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const gammaText = await gammaRes.text();
+      if (gammaRes.ok && gammaText) {
+        const arr = JSON.parse(gammaText);
+        const gm = Array.isArray(arr) ? arr[0] : null;
+        if (gm) {
+          bestBid = num(gm.bestBid ?? gm.bestBid?.toString(), null);
+          bestAsk = num(gm.bestAsk ?? gm.bestAsk?.toString(), null);
+          const lastTrade = num(gm.lastTradePrice ?? gm.lastTradePrice?.toString(), null);
+          if (lastTrade !== null && lastTrade > 0) {
+            mid = lastTrade;
+          } else if (bestBid !== null && bestAsk !== null) {
+            mid = Number(((bestBid + bestAsk) / 2).toFixed(6));
+          } else if (bestBid !== null) {
+            mid = bestBid;
+          } else if (bestAsk !== null) {
+            mid = bestAsk;
+          }
+          if (mid !== null) return { bestBid, bestAsk, mid };
+        }
+      }
+    } catch {
+      // fall through to CLOB endpoints
+    }
+
+    // ---- FALLBACK: CLOB book + midpoint (only when gamma failed) -----------
+    const url = `${clobBase}/book?token_id=${encodeURIComponent(tokenId)}`;
     try {
       const response = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       const text = await response.text();
@@ -518,7 +554,6 @@ export function createBroker(config, options = {}) {
     } catch {
       // fall through to /midpoint
     }
-    // Venue midpoint is the authoritative reference price; prefer it over a naive average.
     try {
       const midUrl = `${clobBase}/midpoint?token_id=${encodeURIComponent(tokenId)}`;
       const midResponse = await fetchImpl(midUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
@@ -532,7 +567,41 @@ export function createBroker(config, options = {}) {
     if (mid === null && bestBid !== null && bestAsk !== null) {
       mid = Number(((bestBid + bestAsk) / 2).toFixed(6));
     }
+
+    // ---- thin-market guard (CLOB fallback only) ----------------------------
+    const spreadPct = bestBid !== null && bestAsk !== null && bestBid > 0
+      ? (bestAsk - bestBid) / bestBid
+      : (bestBid === null || bestAsk === null ? Infinity : 0);
+    const wideSpread = bestBid === null || bestAsk === null || spreadPct > THIN_MARKET_SPREAD_PCT;
+    if (wideSpread) {
+      const lastTrade = await fetchLastTradePrice(tokenId);
+      if (lastTrade !== null && lastTrade > 0) {
+        mid = lastTrade;
+      } else if (bestBid !== null) {
+        mid = bestBid;
+      }
+    }
     return { bestBid, bestAsk, mid };
+  }
+
+  /**
+   * Fetch the most recent confirmed trade price for a token via CLOB /trades.
+   * Returns null when no trade history is available (e.g. a brand-new market).
+   */
+  async function fetchLastTradePrice(tokenId) {
+    try {
+      const url = `${clobBase}/trades?market=${encodeURIComponent(tokenId)}&limit=1&taker_only=false`;
+      const response = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const text = await response.text();
+      if (!response.ok || !text) return null;
+      const raw = JSON.parse(text);
+      const trades = Array.isArray(raw) ? raw : (Array.isArray(raw?.trades) ? raw.trades : []);
+      const last = trades[0];
+      const price = last ? num(last.price ?? last.priceUsd ?? null, null) : null;
+      return price !== null && price > 0 ? price : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Collect a live mark price per held short code (for mark-to-market). */
@@ -544,7 +613,7 @@ export function createBroker(config, options = {}) {
       const market = marketMap.get(symbol);
       if (!market) { marks.set(symbol, null); return; }
       try {
-        const book = await fetchBook(market.tokenId);
+        const book = await fetchBook(market);
         marks.set(symbol, book.mid);
       } catch {
         marks.set(symbol, null);
