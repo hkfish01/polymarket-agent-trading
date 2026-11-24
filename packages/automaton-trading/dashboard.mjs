@@ -44,6 +44,8 @@ const HTML_FILE = path.join(__dirname, 'dashboard.html');
 // ---------------------------------------------------------------------------
 const PRICE_RMB_PER_TOPUP = Number(process.env.TOPUP_RMB ?? 80);
 const PRICE_CREDITS_PER_TOPUP = Number(process.env.TOPUP_CREDITS ?? 100000);
+// Operator's reference FX rate for converting the real RMB token bill into USD.
+const USD_TO_RMB = Number(process.env.USD_TO_RMB ?? 6.5);
 const RMB_PER_CREDIT = PRICE_RMB_PER_TOPUP / PRICE_CREDITS_PER_TOPUP; // 0.0008
 const CREDITS_PER_MTOKEN_INPUT_CACHE_HIT = 30;
 const CREDITS_PER_MTOKEN_INPUT_CACHE_MISS = 300;
@@ -321,7 +323,12 @@ function buildSummary(agents, treasury = {}) {
   // 因為上游不回傳 cost 欄位）。用這個口徑才不會把 token 花費算成 0。
   const totalCostsUsd = round2(sum((agent) => agent.costsUsd));
   const totalTradingFeesUsd = round2(sum((agent) => agent.tradingFeesUsd));
-  // 從總額看：treasury 餘額 − 起始投入 − 手續費 − token 花費 = 真正留在系統的盈虧。
+  const totalRealRmb = Math.round(sum((agent) => agent.tokens.realRmb) * 1e4) / 1e4;
+  // 真實 token 花費：按 muskspace 積分單價計的人民幣帳單，再按操作員匯率換成 USD。
+  // 注意：這與 ledger 的 costsUsd（每週期包價的 inference/data/hosting/agent review）
+  // 是兩套口徑，不能互換。
+  const totalRealTokenCostUsd = Math.round((totalRealRmb / USD_TO_RMB) * 10000) / 10000;
+  // 從總額看：treasury 餘額 − 起始投入 − 手續費 − 實際扣帳營運成本 = 留在系統的盈虧。
   const netPnlFromTreasuryUsd = round2(
     treasuryPoolUsd - initialCapitalUsd - totalTradingFeesUsd - totalCostsUsd,
   );
@@ -343,7 +350,9 @@ function buildSummary(agents, treasury = {}) {
     totalOutputTokens: sum((agent) => agent.tokens.outputTokens),
     totalLlmCostUsd,
     // Real money the operator has burned (billed at muskspace list price, cache-miss worst case).
-    totalRealRmb: Math.round(sum((agent) => agent.tokens.realRmb) * 1e4) / 1e4,
+    totalRealRmb,
+    totalRealTokenCostUsd,
+    usdToRmb: USD_TO_RMB,
     totalRealCredits: sum((agent) => agent.tokens.realCredits),
     totalTrades: sum((agent) => agent.trades),
     totalCostsUsd,
@@ -471,6 +480,7 @@ function buildPayload() {
       },
       topupRmb: PRICE_RMB_PER_TOPUP,
       topupCredits: PRICE_CREDITS_PER_TOPUP,
+      usdToRmb: USD_TO_RMB,
       // Billing assumption: usage rows have no cached-token field, so all input is
       // billed at the cache-miss rate (conservative upper bound on real spend).
       inputBillingAssumption: 'cache-miss (worst case)',

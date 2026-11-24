@@ -442,9 +442,18 @@ function render(payload) {
     { label: '起始金額（原始投入）', value: usd(summary.initialCapitalUsd) },
     { label: 'Treasury 餘額', value: usd(summary.treasuryPoolUsd), cls: 'accent' },
     { label: '總手續費支出', value: usd(summary.totalTradingFeesUsd), cls: 'warn' },
-    { label: '總 token 花費 (USD)', value: usd(summary.totalCostsUsd, 4), cls: 'warn' },
     {
-      label: '當前盈虧 = 資金池 − 起始 − 手續費 − token',
+      label: '總 token 花費 (USD，真實積分帳單 ÷ 6.5)',
+      value: usd(summary.totalRealTokenCostUsd, 4),
+      cls: 'warn',
+    },
+    {
+      label: '總營運成本 (ledger USD，已扣帳)',
+      value: usd(summary.totalCostsUsd, 4),
+      cls: 'muted',
+    },
+    {
+      label: '當前盈虧 = 資金池 − 起始 − 手續費 − 營運成本',
       value: usd(summary.netPnlFromTreasuryUsd),
       cls: cls(summary.netPnlFromTreasuryUsd),
     },
