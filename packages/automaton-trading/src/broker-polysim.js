@@ -548,18 +548,21 @@ export function createBroker(config, options = {}) {
   // -------------------------------------------------------------------------
 
   /**
-   * Best available mid for one token. Uses the CLOB /midpoint endpoint (venue's own
-   * reference mid) when the top-of-book is crossed/thin, because a self-computed
-   * (bestBid+bestAsk)/2 on a book like $0.01 x $0.99 yields a meaningless $0.50.
-   * We still return bestBid/bestAsk so the caller can gauge spread quality.
+   * Authoritative probability for one token.
+   *
+   * Gamma `outcomePrices` is the ONLY tradable price source. This is deliberate:
+   * Polymarket's CLOB book can be one-sided (a huge wall of bids at $0.001 with
+   * zero asks on a 99.95%-certain market). Any code that falls back to bestBid
+   * would then "buy" a $0.9995 token for $0.001 and book a fake 1000x profit.
+   *
+   * If gamma is unreachable or returns an invalid/absent price, return mid=null
+   * and let the caller reject the order (NO_PRICE). Never substitute book levels.
    */
   async function fetchBook(market) {
-    const tokenId = market.tokenId;
+    const isNo = String(market.side ?? 'YES').toUpperCase() === 'NO';
     let bestBid = null;
     let bestAsk = null;
-    let mid = null;
 
-    // ---- PRIMARY: gamma API authoritative quote ---------------------------
     try {
       const gammaUrl = `${gammaBase}/markets?slug=${encodeURIComponent(market.slug ?? '')}`;
       const gammaRes = await fetchImpl(gammaUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
@@ -568,81 +571,48 @@ export function createBroker(config, options = {}) {
         const arr = JSON.parse(gammaText);
         const gm = Array.isArray(arr) ? arr[0] : null;
         if (gm) {
-          // Gamma's top-of-book fields describe the YES token. For a NO symbol use
-          // the market's outcomePrices (NO = 1 − YES for a binary market).
-          if (String(market.side ?? 'YES').toUpperCase() === 'NO') {
-            let prices = gm.outcomePrices;
-            if (typeof prices === 'string') {
-              try { prices = JSON.parse(prices); } catch { prices = []; }
-            }
-            const idx = Number.isInteger(market.noIndex) ? market.noIndex : 1;
-            const noPrice = num(prices?.[idx], null);
-            if (noPrice !== null && noPrice > 0 && noPrice < 1) {
-              return { bestBid: null, bestAsk: null, mid: noPrice };
-            }
-          }
           bestBid = num(gm.bestBid ?? gm.bestBid?.toString(), null);
           bestAsk = num(gm.bestAsk ?? gm.bestAsk?.toString(), null);
-          const lastTrade = num(gm.lastTradePrice ?? gm.lastTradePrice?.toString(), null);
-          if (lastTrade !== null && lastTrade > 0) {
-            mid = lastTrade;
-          } else if (bestBid !== null && bestAsk !== null) {
-            mid = Number(((bestBid + bestAsk) / 2).toFixed(6));
-          } else if (bestBid !== null) {
-            mid = bestBid;
-          } else if (bestAsk !== null) {
-            mid = bestAsk;
+          let prices = gm.outcomePrices;
+          if (typeof prices === 'string') {
+            try { prices = JSON.parse(prices); } catch { prices = []; }
           }
-          if (mid !== null) return { bestBid, bestAsk, mid };
+          if (!Array.isArray(prices)) prices = [];
+          const yesIdx = Number.isInteger(market.yesIndex) ? market.yesIndex : 0;
+          const noIdx = Number.isInteger(market.noIndex) ? market.noIndex : 1 - yesIdx;
+          const idx = isNo ? noIdx : yesIdx;
+          const price = num(prices[idx], null);
+
+          // Reject anything outside (0,1) or complementary-pair inconsistency.
+          if (price !== null && Number.isFinite(price) && price > 0 && price < 1) {
+            const yesPrice = num(prices[yesIdx], null);
+            const noPrice = num(prices[noIdx], null);
+            const pairOk = yesPrice === null || noPrice === null
+              ? true
+              : Math.abs((yesPrice + noPrice) - 1) <= 0.02;
+            if (pairOk) return { bestBid, bestAsk, mid: price };
+          }
         }
       }
     } catch {
-      // fall through to CLOB endpoints
+      // gamma unreachable -> no tradable price (never fall back to book levels)
     }
 
-    // ---- FALLBACK: CLOB book + midpoint (only when gamma failed) -----------
-    const url = `${clobBase}/book?token_id=${encodeURIComponent(tokenId)}`;
+    // Optional, non-authoritative diagnostics only: read the CLOB book so callers
+    // can see bid/ask, but NEVER derive `mid` from it.
     try {
+      const url = `${clobBase}/book?token_id=${encodeURIComponent(market.tokenId)}`;
       const response = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       const text = await response.text();
       if (response.ok && text) {
         const raw = JSON.parse(text);
-        const bids = Array.isArray(raw?.bids) ? raw.bids : [];
-        const asks = Array.isArray(raw?.asks) ? raw.asks : [];
-        bestBid = num(bids[0]?.price, null);
-        bestAsk = num(asks[0]?.price, null);
+        bestBid = num(Array.isArray(raw?.bids) ? raw.bids[0]?.price : null, null);
+        bestAsk = num(Array.isArray(raw?.asks) ? raw.asks[0]?.price : null, null);
       }
     } catch {
-      // fall through to /midpoint
+      // diagnostics only
     }
-    try {
-      const midUrl = `${clobBase}/midpoint?token_id=${encodeURIComponent(tokenId)}`;
-      const midResponse = await fetchImpl(midUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-      const midText = await midResponse.text();
-      if (midResponse.ok && midText) {
-        mid = num(JSON.parse(midText)?.mid, null);
-      }
-    } catch {
-      // keep mid null; caller treats null as "no tradable price"
-    }
-    if (mid === null && bestBid !== null && bestAsk !== null) {
-      mid = Number(((bestBid + bestAsk) / 2).toFixed(6));
-    }
-
-    // ---- thin-market guard (CLOB fallback only) ----------------------------
-    const spreadPct = bestBid !== null && bestAsk !== null && bestBid > 0
-      ? (bestAsk - bestBid) / bestBid
-      : (bestBid === null || bestAsk === null ? Infinity : 0);
-    const wideSpread = bestBid === null || bestAsk === null || spreadPct > THIN_MARKET_SPREAD_PCT;
-    if (wideSpread) {
-      const lastTrade = await fetchLastTradePrice(tokenId);
-      if (lastTrade !== null && lastTrade > 0) {
-        mid = lastTrade;
-      } else if (bestBid !== null) {
-        mid = bestBid;
-      }
-    }
-    return { bestBid, bestAsk, mid };
+    return { bestBid, bestAsk, mid: null };
   }
 
   /**
