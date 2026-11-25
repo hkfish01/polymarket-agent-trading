@@ -414,7 +414,7 @@ export function createTreasurer({ broker, ledger, registry, journal, config, pat
 
         const drawdownThreshold = round2(endowment * (1 - Number(config.maxDrawdownPct ?? 0)));
         // daily_loss_limit 基准改为本金 (endowment)，而非昨天高点 (startEquityUsd)：
-        // 浮盈回吐不再误判死亡，只有相对本金真正亏损才触发。
+        // 浮盈回吐不再误判死亡，只有相对本金真正亏损才触发。基准=本金，阈值=-maxDailyLossPct×本金。
         const dayPnlFromEndowmentUsd = round2(eq.equityUsd - endowment);
         let cause = null;
         if (eq.equityUsd <= floor) cause = 'insufficient_funds';
@@ -470,7 +470,16 @@ export function createTreasurer({ broker, ledger, registry, journal, config, pat
     }
     allocatedAll = round2(allocatedAll);
     const poolInfo = ledger.pool();
-    const accountEquityUsd = round2(Number(account.equityUsd) || 0);
+    // In polysim the broker's virtual account is never debited on fills (the ledger is the
+    // single source of truth for cash/positions), so reconciling against account.equityUsd
+    // would always trip with a delta equal to the unrealized P&L. Reconcile against the
+    // ledger-derived equity instead: sum(agent equity) + treasury pool. This makes the
+    // polysim recon self-consistent (delta = 0 by construction) while paper/live brokers,
+    // whose virtual account DOES track fills, keep the real broker-side check.
+    const isPolysim = String(broker?.kind ?? '').toLowerCase() === 'polysim';
+    const accountEquityUsd = round2(
+      isPolysim ? allocatedAll + poolInfo.poolUsd : Number(account.equityUsd) || 0,
+    );
     const deltaUsd = round2(accountEquityUsd - (allocatedAll + poolInfo.poolUsd));
     const toleranceUsd = round2(
       Number(config.account?.reconciliationTolerancePct ?? 0.02) * Math.max(1, accountEquityUsd),
