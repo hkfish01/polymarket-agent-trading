@@ -7,9 +7,12 @@
  * price, politics, sports, economics events) without touching a wallet or real funds.
  *
  *   READS   -> real data, no auth, from Gamma (discovery) + CLOB (book/midpoint/history).
- *   WRITES  -> simulated. submitOrder() fills instantly against the real top-of-book
- *              midpoint into an in-memory cash/position book (the same virtual-accounting
- *              pattern as broker-sim.js). Nothing is signed, nothing hits a chain.
+ *   WRITES  -> simulated. submitOrder() fills instantly at the token's OWN real CLOB
+ *              top-of-book midpoint into an in-memory cash/position book (the same
+ *              virtual-accounting pattern as broker-sim.js). Nothing is signed, nothing
+ *              hits a chain. Fills and marks share ONE price source: the live book mid.
+ *              One-sided or absurdly wide books are rejected (NO_PRICE) instead of being
+ *              priced from Gamma's 1−YES derived number, which has no liquidity behind it.
  *
  * WHY SHORT SYMBOLS: the engine validates config.symbols as short uppercase tickers
  * (`^[A-Z][A-Z0-9.]{0,9}$`) and threads them through the genome/spec/position path.
@@ -548,71 +551,66 @@ export function createBroker(config, options = {}) {
   // -------------------------------------------------------------------------
 
   /**
-   * Authoritative probability for one token.
+   * Executable probability for one token, from ITS OWN real CLOB order book.
    *
-   * Gamma `outcomePrices` is the ONLY tradable price source. This is deliberate:
-   * Polymarket's CLOB book can be one-sided (a huge wall of bids at $0.001 with
-   * zero asks on a 99.95%-certain market). Any code that falls back to bestBid
-   * would then "buy" a $0.9995 token for $0.001 and book a fake 1000x profit.
+   * Each outcome token (YES and NO) has its own token_id and its own live book.
+   * We read that book directly and derive the mid from the real top-of-book.
+   * Gamma `outcomePrices` is NOT used for pricing: for a NO token it is merely
+   * 1 − YES with no resting liquidity behind it, so a market at 99.95% YES can
+   * show a "NO price" of 0.0005 that nobody will actually trade at.
    *
-   * If gamma is unreachable or returns an invalid/absent price, return mid=null
-   * and let the caller reject the order (NO_PRICE). Never substitute book levels.
+   * Design decision (real-price sim):
+   *   - BUY fills at bestAsk, SELL fills at bestBid (real taker-executable prices).
+   *   - mark-to-market uses mid = (bestBid + bestAsk)/2.
+   *   - One-sided / crossed / too-wide books are NOT tradable -> mid=null so the
+   *     caller rejects with NO_PRICE. We never invent a fill from a single wall.
+   *   - The optional gamma pair is only a sanity cross-check, never a price source.
    */
   async function fetchBook(market) {
-    const isNo = String(market.side ?? 'YES').toUpperCase() === 'NO';
     let bestBid = null;
     let bestAsk = null;
-
-    try {
-      const gammaUrl = `${gammaBase}/markets?slug=${encodeURIComponent(market.slug ?? '')}`;
-      const gammaRes = await fetchImpl(gammaUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-      const gammaText = await gammaRes.text();
-      if (gammaRes.ok && gammaText) {
-        const arr = JSON.parse(gammaText);
-        const gm = Array.isArray(arr) ? arr[0] : null;
-        if (gm) {
-          bestBid = num(gm.bestBid ?? gm.bestBid?.toString(), null);
-          bestAsk = num(gm.bestAsk ?? gm.bestAsk?.toString(), null);
-          let prices = gm.outcomePrices;
-          if (typeof prices === 'string') {
-            try { prices = JSON.parse(prices); } catch { prices = []; }
-          }
-          if (!Array.isArray(prices)) prices = [];
-          const yesIdx = Number.isInteger(market.yesIndex) ? market.yesIndex : 0;
-          const noIdx = Number.isInteger(market.noIndex) ? market.noIndex : 1 - yesIdx;
-          const idx = isNo ? noIdx : yesIdx;
-          const price = num(prices[idx], null);
-
-          // Reject anything outside (0,1) or complementary-pair inconsistency.
-          if (price !== null && Number.isFinite(price) && price > 0 && price < 1) {
-            const yesPrice = num(prices[yesIdx], null);
-            const noPrice = num(prices[noIdx], null);
-            const pairOk = yesPrice === null || noPrice === null
-              ? true
-              : Math.abs((yesPrice + noPrice) - 1) <= 0.02;
-            if (pairOk) return { bestBid, bestAsk, mid: price };
-          }
-        }
-      }
-    } catch {
-      // gamma unreachable -> no tradable price (never fall back to book levels)
-    }
-
-    // Optional, non-authoritative diagnostics only: read the CLOB book so callers
-    // can see bid/ask, but NEVER derive `mid` from it.
     try {
       const url = `${clobBase}/book?token_id=${encodeURIComponent(market.tokenId)}`;
       const response = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       const text = await response.text();
       if (response.ok && text) {
         const raw = JSON.parse(text);
-        bestBid = num(Array.isArray(raw?.bids) ? raw.bids[0]?.price : null, null);
-        bestAsk = num(Array.isArray(raw?.asks) ? raw.asks[0]?.price : null, null);
+        const bids = Array.isArray(raw?.bids) ? raw.bids : [];
+        const asks = Array.isArray(raw?.asks) ? raw.asks : [];
+        // CLOB returns bids/asks in ASCENDING price order. bestBid is the highest
+        // bid (last element), bestAsk is the lowest ask (first element). Taking
+        // index 0 for both would yield a bogus 0.001/0.999 spread on every market.
+        let highBid = null;
+        for (const level of bids) {
+          const p = num(level?.price, null);
+          if (p !== null && (highBid === null || p > highBid)) highBid = p;
+        }
+        let lowAsk = null;
+        for (const level of asks) {
+          const p = num(level?.price, null);
+          if (p !== null && (lowAsk === null || p < lowAsk)) lowAsk = p;
+        }
+        bestBid = highBid;
+        bestAsk = lowAsk;
       }
     } catch {
-      // diagnostics only
+      return { bestBid: null, bestAsk: null, mid: null };
     }
-    return { bestBid, bestAsk, mid: null };
+
+    // Require a genuine two-sided market: a wall on one side with no counterparty
+    // is not a tradable price (this is exactly how the 0.001 fake fills happened).
+    if (bestBid === null || bestAsk === null) return { bestBid, bestAsk, mid: null };
+    if (!(bestBid > 0) || !(bestAsk > 0) || bestAsk <= bestBid) return { bestBid, bestAsk, mid: null };
+
+    const spread = bestAsk - bestBid;
+    const mid = Number(((bestBid + bestAsk) / 2).toFixed(6));
+    // Reject absurdly wide books — a "price" spanning 0.001..0.99 is not usable.
+    // Use an absolute floor too: a $0.05 market with a $0.01 tick (20% relative)
+    // is legitimate, while PE1.NO at 0.001/0.992 (~200%) is not.
+    const maxSpread = Math.max(THIN_MARKET_SPREAD_PCT * mid, 0.02);
+    if (spread > maxSpread) return { bestBid, bestAsk, mid: null };
+
+    return { bestBid, bestAsk, mid };
   }
 
   /**
