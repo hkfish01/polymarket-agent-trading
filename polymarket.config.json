@@ -4,7 +4,7 @@
   "cycleIntervalSec": 300,
   "reaperIntervalSec": 30,
   "population": {
-    "initial": 15,
+    "initial": 10,
     "cap": 30
   },
   "endowmentUsd": 500,
@@ -28,7 +28,7 @@
     "childEndowmentUsd": 250
   },
   "account": {
-    "allocationCapPct": 0.8,
+    "allocationCapPct": 1.1,
     "reconciliationTolerancePct": 0.02
   },
   "risk": {
@@ -77,7 +77,7 @@
     "PX1"
   ],
   "sim": {
-    "accountEquityUsd": 100000,
+    "accountEquityUsd": 5000,
     "slippageBps": 8,
     "commissionBps": 10
   },

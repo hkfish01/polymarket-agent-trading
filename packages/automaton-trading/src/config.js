@@ -384,7 +384,9 @@ export function validateConfig(config) {
   assertNumber(config.deathFloorUsd, 'deathFloorUsd', { min: 0 });
   assertPct(config.deathFloorPct, 'deathFloorPct');
   assertPct(config.maxDrawdownPct, 'maxDrawdownPct');
-  assertPct(config.account.allocationCapPct, 'account.allocationCapPct');
+  // allocationCapPct may exceed 1: it is a multiple of account equity (e.g. 1.1 gives
+  // a 10% headroom buffer so trivial cost debits cannot trip the allocation_cap halt).
+  assertNumber(config.account.allocationCapPct, 'account.allocationCapPct', { min: 0, max: 2 });
   assertPct(config.account.reconciliationTolerancePct, 'account.reconciliationTolerancePct');
 
   for (const key of ['inferencePerCycleUsd', 'dataPerCycleUsd', 'hostingPerHourUsd', 'committedMonthlyUsd']) {
